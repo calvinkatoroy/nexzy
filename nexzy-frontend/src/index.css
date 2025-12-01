@@ -1,0 +1,67 @@
+/* 1. Import Tailwind */
+@import "tailwindcss";
+
+/* 2. Import JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+
+/* 3. Define the "Nexzy" Theme */
+@theme {
+  /* Fonts */
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* The Anime.js Palette */
+  --color-background: #252423; /* --black */
+  --color-surface: rgba(37, 36, 35, 0.8);
+  --color-white: #F6F4F2;
+  --color-grey: #b8b6b3;
+  
+  /* Accents */
+  --color-red: #FF4B4B;
+  --color-orange: #FF8F42;
+  --color-yellow: #F6FF56;
+  --color-citrus: #A4FF4F;
+  --color-green: #18FF74;
+  --color-darkgreen: #00D672;
+  --color-turquoise: #3CFFEC;
+  --color-skyblue: #61C3FF;
+  --color-kingblue: #5A87FF;
+  --color-lavender: #8453E3;
+  --color-purple: #C26EFF;
+  --color-pink: #FB89FB;
+
+  /* Custom Animations */
+  --animate-spin-slow: spin 3s linear infinite;
+}
+
+/* 4. Global Base Styles */
+:root {
+  background-color: var(--color-background);
+  color: var(--color-white);
+  font-family: var(--font-mono);
+  /* Prevent overscroll bounce on Mac for an "App-like" feel */
+  overscroll-behavior: none; 
+}
+
+/* 5. Custom Utilities */
+@layer utilities {
+  .glass-panel {
+    background-color: var(--color-surface);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(246, 244, 242, 0.1); /* white/10 equivalent */
+  }
+}
+
+/* 6. Custom Scrollbar (Terminal Look) */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-background); 
+}
+::-webkit-scrollbar-thumb {
+  background: #3C3C3C; 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-grey); 
+}
