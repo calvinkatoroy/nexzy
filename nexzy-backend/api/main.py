@@ -26,6 +26,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.supabase_client import get_supabase
 from lib.auth import get_current_user, get_optional_user
+from lib.ai_client import analyze_batch as ai_analyze_batch
 from scrapers.discovery_engine import DiscoveryOrchestrator
 from config import CORS_ORIGINS, TARGET_DOMAIN
 from supabase import Client
@@ -235,6 +236,36 @@ def run_scan_task(
         
         logger.info(f"[CREDENTIALS] Scan {scan_id} found {credentials_found} credentials")
         
+        # === AI SCORING & SUMMARIZATION ===
+        # Prepare data for AI analysis
+        if credentials_found > 0:
+            logger.info(f"[AI] Preparing {credentials_found} items for AI analysis...")
+            
+            ai_items = []
+            for item in discovered_items:
+                if item.get('has_credentials', False):
+                    # Get content preview (first 1200 chars)
+                    content = item.get('content_preview', '')[:1200]
+                    ai_items.append({
+                        "text": content,
+                        "url": item.get('url', ''),
+                        "timestamp": item.get('found_at', '')
+                    })
+            
+            # Call AI service for batch analysis
+            try:
+                ai_results = await ai_analyze_batch(
+                    items=ai_items,
+                    score_threshold=40.0,  # Only summarize if score >= 40
+                    max_parallel_gemini=8
+                )
+                logger.info(f"[AI] Received {len(ai_results)} AI analysis results")
+            except Exception as e:
+                logger.error(f"[AI] Analysis failed: {e}")
+                ai_results = []
+        else:
+            ai_results = []
+        
         # Create alerts for results with credentials
         alerts_created = 0
         if credentials_found > 0:
@@ -247,32 +278,76 @@ def run_scan_task(
                 .eq('has_credentials', True)\
                 .execute()
             
-            for result in results_response.data:
+            # Create mapping of AI results by index
+            ai_results_map = {ai_res.get('index', i): ai_res for i, ai_res in enumerate(ai_results)}
+            
+            for idx, result in enumerate(results_response.data):
                 try:
-                    # Determine severity based on relevance score and target emails
+                    # Get AI analysis if available
+                    ai_data = ai_results_map.get(idx, {})
+                    ai_score = ai_data.get('vulnerability_score', 0.0)
+                    ai_summary = ai_data.get('summary', '')
+                    ai_rationale = ai_data.get('rationale', '')
+                    ai_alert_level = ai_data.get('alerts', 'LOW')
+                    ai_signals = ai_data.get('signals', [])
+                    
+                    # Determine severity based on AI score (if available) + target emails
                     target_email_count = len(result.get('target_emails', []))
                     relevance = result.get('relevance_score', 0.0)
                     
-                    if target_email_count >= 5 or relevance >= 0.8:
-                        severity = 'critical'
-                    elif target_email_count >= 2 or relevance >= 0.6:
-                        severity = 'high'
-                    elif target_email_count >= 1 or relevance >= 0.4:
-                        severity = 'medium'
+                    # Use AI score if available, otherwise fallback to heuristic
+                    if ai_score > 0:
+                        if ai_score >= 80 or ai_alert_level == 'HIGH':
+                            severity = 'critical'
+                        elif ai_score >= 50 or ai_alert_level == 'MEDIUM':
+                            severity = 'high'
+                        elif ai_score >= 30:
+                            severity = 'medium'
+                        else:
+                            severity = 'low'
                     else:
-                        severity = 'low'
+                        # Fallback heuristic
+                        if target_email_count >= 5 or relevance >= 0.8:
+                            severity = 'critical'
+                        elif target_email_count >= 2 or relevance >= 0.6:
+                            severity = 'high'
+                        elif target_email_count >= 1 or relevance >= 0.4:
+                            severity = 'medium'
+                        else:
+                            severity = 'low'
+                    
+                    # Build description with AI insights
+                    description = f"Personal data leak detected from {result.get('author', 'unknown')} containing {target_email_count} target emails."
+                    
+                    if ai_summary:
+                        description += f"\n\nAI Summary: {ai_summary}"
+                    
+                    if ai_rationale:
+                        description += f"\n\nRisk Assessment: {ai_rationale}"
+                    
+                    if ai_signals:
+                        description += f"\n\nDetected Signals: {', '.join(ai_signals)}"
+                    
+                    description += f"\n\nSource URL: {result.get('url', 'N/A')}"
+                    
+                    if ai_score > 0:
+                        description += f"\n\nVulnerability Score: {ai_score:.1f}/100"
                     
                     alert_data = {
                         'user_id': user_id,
-                        'title': f"Data Leak Detected - {result.get('source', 'Unknown Source')}",
-                        'description': f"Personal data leak detected from {result.get('author', 'unknown')} containing {target_email_count} target emails. Source URL: {result.get('url', 'N/A')}",
+                        'title': f"Data Leak Detected - {result.get('source', 'Unknown Source')} (AI Score: {ai_score:.0f})" if ai_score > 0 else f"Data Leak Detected - {result.get('source', 'Unknown Source')}",
+                        'description': description,
                         'severity': severity
                         # status will use database default
                     }
                     
                     supabase.table('alerts').insert(alert_data).execute()
                     alerts_created += 1
-                    logger.info(f"  [OK] Alert created: {severity.upper()} - {alert_data['title']}")
+                    
+                    if ai_score > 0:
+                        logger.info(f"  [OK] Alert created: {severity.upper()} - AI Score: {ai_score:.1f} - {alert_data['title']}")
+                    else:
+                        logger.info(f"  [OK] Alert created: {severity.upper()} - {alert_data['title']}")
                     
                 except Exception as e:
                     logger.error(f"  [ERROR] Failed to create alert for result {result.get('id')}: {e}")
