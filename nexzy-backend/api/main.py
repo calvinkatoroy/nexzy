@@ -145,7 +145,7 @@ class ScanResult(BaseModel):
 # BACKGROUND TASK FUNCTION
 # ==============================================================================
 
-def run_scan_task(
+async def run_scan_task(
     scan_id: str, 
     user_id: str,
     scan_request: ScanRequest, 
@@ -252,17 +252,17 @@ def run_scan_task(
                         "timestamp": item.get('found_at', '')
                     })
             
-            # Call AI service for batch analysis
-            try:
-                ai_results = await ai_analyze_batch(
-                    items=ai_items,
-                    score_threshold=40.0,  # Only summarize if score >= 40
-                    max_parallel_gemini=8
-                )
-                logger.info(f"[AI] Received {len(ai_results)} AI analysis results")
-            except Exception as e:
-                logger.error(f"[AI] Analysis failed: {e}")
-                ai_results = []
+                # Call AI service for batch analysis
+                try:
+                    ai_results = await ai_analyze_batch(
+                        items=ai_items,
+                        score_threshold=40.0,  # Only summarize if score >= 40
+                        max_parallel_gemini=8
+                    )
+                    logger.info(f"[AI] Received {len(ai_results)} AI analysis results")
+                except Exception as e:
+                    logger.error(f"[AI] Analysis failed: {e}")
+                    ai_results = []
         else:
             ai_results = []
         
@@ -426,6 +426,82 @@ async def health_check(supabase: Client = Depends(get_supabase)):
     }
 
 
+@app.get("/api/stats")
+async def get_stats(
+    current_user: Dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    Aggregated dashboard statistics for the frontend.
+
+    Returns counts for:
+    - alerts_total, alerts_critical, alerts_high, alerts_medium, alerts_low
+    - alerts_resolved, alerts_open
+    - credentials_leaked (number of scan_results with has_credentials=True)
+    - new_alerts (alerts created in the last 24h)
+    """
+    try:
+        user_id = current_user['id']
+
+        # Alerts totals by severity
+        alerts_resp = supabase.table('alerts')\
+            .select('id, severity, status, created_at')\
+            .eq('user_id', user_id)\
+            .execute()
+
+        alerts = alerts_resp.data or []
+        alerts_total = len(alerts)
+        alerts_critical = sum(1 for a in alerts if (a.get('severity') or '').lower() == 'critical')
+        alerts_high = sum(1 for a in alerts if (a.get('severity') or '').lower() == 'high')
+        alerts_medium = sum(1 for a in alerts if (a.get('severity') or '').lower() == 'medium')
+        alerts_low = sum(1 for a in alerts if (a.get('severity') or '').lower() == 'low')
+
+        # Resolved/open status (assuming status field stores lifecycle like 'open'/'resolved')
+        alerts_resolved = sum(1 for a in alerts if (a.get('status') or '').lower() == 'resolved')
+        alerts_open = alerts_total - alerts_resolved
+
+        # New alerts in last 24 hours
+        now = datetime.utcnow()
+        def is_recent(created_at: str) -> bool:
+            try:
+                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                return (now - dt).total_seconds() <= 24 * 3600
+            except Exception:
+                return False
+        new_alerts = sum(1 for a in alerts if a.get('created_at') and is_recent(a['created_at']))
+
+        # Credentials leaked: count scan_results with has_credentials=True for user's scans
+        scans_resp = supabase.table('scans')\
+            .select('id')\
+            .eq('user_id', user_id)\
+            .execute()
+        scan_ids = [s['id'] for s in (scans_resp.data or [])]
+
+        credentials_leaked = 0
+        if scan_ids:
+            sr_resp = supabase.table('scan_results')\
+                .select('id, has_credentials')\
+                .in_('scan_id', scan_ids)\
+                .eq('has_credentials', True)\
+                .execute()
+            credentials_leaked = len(sr_resp.data or [])
+
+        return {
+            'alerts_total': alerts_total,
+            'alerts_critical': alerts_critical,
+            'alerts_high': alerts_high,
+            'alerts_medium': alerts_medium,
+            'alerts_low': alerts_low,
+            'alerts_resolved': alerts_resolved,
+            'alerts_open': alerts_open,
+            'new_alerts': new_alerts,
+            'credentials_leaked': credentials_leaked,
+        }
+    except Exception as e:
+        logger.error(f"Failed to compute stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to compute stats")
+
+
 @app.post("/api/scan", response_model=ScanResponse)
 async def create_scan(
     scan_request: ScanRequest,
@@ -489,14 +565,15 @@ async def create_scan(
         
         logger.info(f"[DB] Scan inserted to database: {result.data}")
         
-        # Add background task to run the scan
-        logger.info(f"[TASK] Adding background task for scan {scan_id}")
-        background_tasks.add_task(
-            run_scan_task,
-            scan_id=scan_id,
-            user_id=user_id,
-            scan_request=scan_request,
-            supabase=supabase
+        # Schedule async background task directly on the running event loop
+        logger.info(f"[TASK] Scheduling async background task for scan {scan_id}")
+        asyncio.create_task(
+            run_scan_task(
+                scan_id=scan_id,
+                user_id=user_id,
+                scan_request=scan_request,
+                supabase=supabase
+            )
         )
         
         logger.info(f"[QUEUED] Scan {scan_id} queued successfully")
@@ -635,14 +712,27 @@ async def search_results(
             .eq('user_id', user_id)\
             .execute()
         
-        # Create URL to alert_id mapping
+        # Create URL to alert_id mapping (robust parsing)
         url_to_alert = {}
         for alert in alerts_response.data:
-            # Extract URL from description like "Source URL: https://..."
-            desc = alert.get('description', '')
+            desc = alert.get('description', '') or ''
+            # Preferred: exact prefix match
             if 'Source URL: ' in desc:
                 url = desc.split('Source URL: ')[-1].strip()
-                url_to_alert[url] = alert['id']
+                if url:
+                    url_to_alert[url] = alert['id']
+                    continue
+            # Fallback: find first http(s) URL substring
+            import re
+            try:
+                m = re.search(r'https?://\S+', desc)
+                if m:
+                    extracted = m.group(0)
+                    # Trim common trailing punctuation
+                    extracted = extracted.rstrip(")'\"]")
+                    url_to_alert[extracted] = alert['id']
+            except Exception:
+                pass
         
         # Get all user's scans
         scans_response = supabase.table('scans')\
@@ -674,10 +764,19 @@ async def search_results(
         results_response = query.order('found_at', desc=True).execute()
         results = results_response.data
         
-        # Add alert_id to each result
+        # Add alert_id to each result (exact match), else try normalized
         for result in results:
-            url = result.get('url')
-            result['alert_id'] = url_to_alert.get(url, None)
+            url = (result.get('url') or '').strip()
+            alert_id = url_to_alert.get(url)
+            if not alert_id and url:
+                # Normalize by removing trailing slashes
+                url_norm = url.rstrip('/')
+                # Try matching any mapping key that equals normalized
+                for mapped_url, a_id in url_to_alert.items():
+                    if mapped_url.rstrip('/') == url_norm:
+                        alert_id = a_id
+                        break
+            result['alert_id'] = alert_id
         
         # Apply keyword search (post-filter since Supabase doesn't have LIKE for arrays)
         if q:
@@ -860,6 +959,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app, 
         host="0.0.0.0", 
-        port=8000,
+        port=8001,
         log_level="info"
     )

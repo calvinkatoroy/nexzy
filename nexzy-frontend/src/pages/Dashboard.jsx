@@ -23,38 +23,47 @@ const Dashboard = () => {
   const [ws, setWs] = useState(null);
 
   useEffect(() => {
+    console.log('[DASHBOARD] useEffect triggered, user:', user?.email || 'null');
+    
     const loadDashboardData = async () => {
+      console.log('[DASHBOARD] loadDashboardData started');
       try {
-        const alertsData = await api.getAlerts();
-        
-        // Calculate stats from real alerts
-        const newAlerts = alertsData.filter(a => a.status === 'new' || a.status === 'active').length;
-        
-        const criticalThreats = alertsData.filter(a => a.severity === 'critical').length;
-        const resolved = alertsData.filter(a => a.resolved_at !== null).length;
-        
-        // Extract credential count from descriptions - try multiple patterns
-        const totalCredentials = alertsData.reduce((sum, a) => {
-          // Try: "Total X records" or "X records" or default to alert count * 20
-          const match1 = a.description.match(/Total (\d+) records/);
-          const match2 = a.description.match(/(\d+) target emails/);
-          const records = match1 ? parseInt(match1[1]) : (match2 ? parseInt(match2[1]) * 5 : 20);
-          return sum + records;
-        }, 0);
+        // Prefer aggregated backend stats
+        let s;
+        try {
+          console.log('[DASHBOARD] Attempting api.getStats()...');
+          s = await api.getStats();
+          console.log('[DASHBOARD] api.getStats() succeeded');
+        } catch (authErr) {
+          console.warn('[DASHBOARD] api.getStats() failed, using fallback:', authErr.message);
+          // Fallback to unauthenticated fetch if JWT not available
+          const baseUrl = import.meta.env.VITE_API_URL;
+          console.log('[DASHBOARD] Fallback fetch to:', `${baseUrl}/api/stats`);
+          const res = await fetch(`${baseUrl}/api/stats`, { credentials: 'include' });
+          console.log('[DASHBOARD] Fallback response status:', res.status);
+          if (!res.ok) throw new Error(`Fallback stats fetch failed: ${res.status}`);
+          s = await res.json();
+          console.log('[DASHBOARD] Fallback succeeded');
+        }
+        console.log('[DASHBOARD] /api/stats:', s);
+        const newAlerts = s.new_alerts ?? 0;
+        const totalCredentials = s.credentials_leaked ?? 0;
+        const criticalThreats = s.alerts_critical ?? 0;
+        const resolved = s.alerts_resolved ?? 0;
 
-        console.log('[DASHBOARD] Stats calculated:', { newAlerts, totalCredentials, criticalThreats, resolved });
+        console.log('[DASHBOARD] Mapped stats:', { newAlerts, totalCredentials, criticalThreats, resolved });
         setStats({ newAlerts, totalCredentials, criticalThreats, resolved });
         setLoading(false);
+        console.log('[DASHBOARD] Stats updated successfully');
       } catch (err) {
-        console.error('Failed to load dashboard data:', err);
+        console.error('[DASHBOARD] Failed to load dashboard data:', err);
+        // Leave existing state values; show error banner
         setError(err.message);
         setLoading(false);
       }
     };
-
-    if (user) {
-      loadDashboardData();
-    }
+    
+    loadDashboardData();
   }, [user]);
 
   // WebSocket for real-time scan updates

@@ -1,3 +1,15 @@
+export async function fetchStats(token) {
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+  const res = await fetch(`${baseUrl}/api/stats`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to load stats');
+  return res.json();
+}
 /**
  * Backend API Client
  * Handles all communication with the FastAPI backend
@@ -5,7 +17,7 @@
 
 import { supabase } from './supabase';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 
 /**
  * Get current user's JWT token
@@ -100,6 +112,13 @@ export const api = {
    */
   async getAlerts() {
     return fetchAPI('/api/alerts');
+  },
+
+  /**
+   * Get aggregated dashboard stats
+   */
+  async getStats() {
+    return fetchAPI('/api/stats');
   },
 
   /**

@@ -1,22 +1,70 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { animate } from 'animejs';
 
-const StatsCard = ({ title, value, icon: Icon, color, trend }) => {
+const StatsCard = ({ title, value, icon: Icon, color, trend, statKey }) => {
   const valueRef = useRef(null);
+  const [fetchedValue, setFetchedValue] = useState(null);
+
+  // Fetch from /api/stats if value is not provided
+  useEffect(() => {
+    const key = statKey || mapTitleToKey(title);
+    if (value === undefined && key) {
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+      fetch(`/api/stats`, {
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Failed to fetch stats'))))
+        .then((data) => {
+          if (data && Object.prototype.hasOwnProperty.call(data, key)) {
+            setFetchedValue(data[key]);
+          }
+        })
+        .catch(() => {
+          // Silent fail: keep default 0
+        });
+    }
+  }, [value, title, statKey]);
+
+  // Normalize incoming value to an integer count
+  const normalized = (() => {
+    try {
+      const sourceVal = value !== undefined ? value : fetchedValue;
+      if (Array.isArray(sourceVal)) return sourceVal.length;
+      if (typeof sourceVal === 'string') {
+        const n = parseInt(sourceVal.replace(/[^0-9-]/g, ''), 10);
+        return Number.isFinite(n) ? Math.max(0, n) : 0;
+      }
+      if (typeof sourceVal === 'number') return Math.max(0, Math.round(sourceVal));
+      if (typeof sourceVal === 'object' && sourceVal !== null) {
+        // Support objects like { count: X }
+        const n = parseInt(sourceVal.count, 10);
+        return Number.isFinite(n) ? Math.max(0, n) : 0;
+      }
+      return 0;
+    } catch {
+      return 0;
+    }
+  })();
 
   useEffect(() => {
-    // 1. Animate the number counting up
-    let obj = { count: 0 };
+    const start = (() => {
+      const currentText = valueRef.current?.innerText || '0';
+      const n = parseInt(currentText.replace(/[^0-9-]/g, ''), 10);
+      return Number.isFinite(n) ? n : 0;
+    })();
+
+    const obj = { count: start };
     animate(obj, {
-      count: value,
-      round: 1, // Snap to integers
-      duration: 1500,
+      count: normalized,
+      round: 1,
+      duration: 800,
       ease: 'outExpo',
       update: () => {
-        if (valueRef.current) valueRef.current.innerText = obj.count;
+        if (valueRef.current) valueRef.current.innerText = obj.count.toLocaleString();
       }
     });
-  }, [value]);
+  }, [normalized]);
 
   return (
     <div className={`glass-panel p-6 rounded-2xl relative overflow-hidden group hover:bg-white/5 transition-colors border-l-4 ${color.replace('text-', 'border-')}`}>
@@ -41,5 +89,14 @@ const StatsCard = ({ title, value, icon: Icon, color, trend }) => {
     </div>
   );
 };
+
+function mapTitleToKey(title) {
+  const t = (title || '').toLowerCase();
+  if (t.includes('new alert')) return 'new_alerts';
+  if (t.includes('credential')) return 'credentials_leaked';
+  if (t.includes('critical')) return 'alerts_critical';
+  if (t.includes('resolved')) return 'alerts_resolved';
+  return null;
+}
 
 export default StatsCard;
