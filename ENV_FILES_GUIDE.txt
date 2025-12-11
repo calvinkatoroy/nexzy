@@ -1,0 +1,252 @@
+# ==============================================================================
+# NEXZY - ENVIRONMENT FILES SETUP GUIDE
+# ==============================================================================
+# Panduan lengkap untuk setup environment files untuk development team
+# ==============================================================================
+
+## 📋 OVERVIEW
+
+Nexzy membutuhkan 3 environment files:
+
+1. nexzy-backend/.env     - Backend configuration (Supabase, API settings)
+2. nexzy-frontend/.env    - Frontend configuration (Supabase anon key, API URL)
+3. ai-service/.env        - AI service configuration (Gemini API key)
+
+## 🚀 QUICK SETUP (5 MINUTES)
+
+### Step 1: Backend Environment
+```bash
+cd nexzy-backend
+cp .env.template.txt .env
+```
+
+Edit nexzy-backend/.env dan isi:
+- SUPABASE_URL         → Dari Supabase dashboard
+- SUPABASE_SERVICE_ROLE_KEY → ⚠️ SECRET! Backend only!
+- SUPABASE_JWT_SECRET  → Untuk token verification
+- TARGET_DOMAIN        → Domain yang dimonitor (e.g., ui.ac.id)
+- AI_SERVICE_URL       → http://localhost:8001 (jika pakai AI)
+
+### Step 2: Frontend Environment
+```bash
+cd nexzy-frontend
+cp .env.template.txt .env
+```
+
+Edit nexzy-frontend/.env dan isi:
+- VITE_SUPABASE_URL    → Sama dengan backend
+- VITE_SUPABASE_ANON_KEY → ✅ PUBLIC key (bukan service role!)
+- VITE_API_URL         → http://localhost:8000 (backend URL)
+
+### Step 3: AI Service Environment
+```bash
+cd ai-service
+cp .env.template.txt .env
+```
+
+Edit ai-service/.env dan isi:
+- GEMINI_API_KEY       → Dari https://aistudio.google.com/app/apikey
+
+## 🔑 GETTING CREDENTIALS
+
+### Supabase Credentials
+1. Buka https://app.supabase.com
+2. Pilih project Nexzy
+3. Go to: Settings > API
+4. Copy values:
+   - Project URL → SUPABASE_URL
+   - anon public key → VITE_SUPABASE_ANON_KEY (frontend)
+   - service_role key → SUPABASE_SERVICE_ROLE_KEY (backend only!)
+5. Go to: Settings > API > JWT Settings
+   - JWT Secret → SUPABASE_JWT_SECRET
+
+### Gemini API Key (FREE!)
+1. Buka https://aistudio.google.com/app/apikey
+2. Sign in dengan Google account
+3. Click "Create API Key"
+4. Copy key (starts with "AIza...")
+5. Paste ke ai-service/.env
+
+## ⚙️ CONFIGURATION DETAILS
+
+### Backend (.env) - COMPLETE EXAMPLE
+
+```env
+# Supabase
+SUPABASE_URL=https://abcdefgh.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGc...LONG_KEY_HERE
+SUPABASE_JWT_SECRET=your-jwt-secret-here
+
+# Target
+TARGET_DOMAIN=ui.ac.id
+
+# Scraper
+REQUEST_DELAY=2.0
+MAX_RETRIES=3
+MIN_RELEVANCE_SCORE=0.3
+
+# API
+API_HOST=0.0.0.0
+API_PORT=8000
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost:5174
+
+# AI Service
+AI_SERVICE_URL=http://localhost:8001
+
+# Logging
+LOG_LEVEL=INFO
+
+# Environment
+ENVIRONMENT=development
+DEBUG=false
+
+# WebSocket
+WS_HEARTBEAT_INTERVAL=30
+WS_MAX_RECONNECT_ATTEMPTS=5
+```
+
+### Frontend (.env) - COMPLETE EXAMPLE
+
+```env
+# Supabase (Frontend)
+VITE_SUPABASE_URL=https://abcdefgh.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGc...PUBLIC_KEY_HERE
+
+# Backend API
+VITE_API_URL=http://localhost:8000
+```
+
+### AI Service (.env) - COMPLETE EXAMPLE
+
+```env
+# Gemini API
+GEMINI_API_KEY=AIzaSyD...YOUR_KEY_HERE
+```
+
+## 🔒 SECURITY CHECKLIST
+
+✅ DO:
+- Use service_role key ONLY in backend
+- Use anon key in frontend
+- Keep .env files local (never commit to Git)
+- Use different values for dev/staging/prod
+- Enable Supabase RLS (Row Level Security)
+
+❌ DON'T:
+- Never commit .env files to Git
+- Never use service_role key in frontend
+- Never share API keys publicly
+- Never hardcode secrets in code
+
+## 🧪 TESTING CONFIGURATION
+
+### Test Backend
+```bash
+cd nexzy-backend
+python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+```
+Visit: http://localhost:8000/docs
+Should see: FastAPI interactive docs
+
+### Test Frontend
+```bash
+cd nexzy-frontend
+npm run dev
+```
+Visit: http://localhost:5173
+Should see: Nexzy landing page
+
+### Test AI Service
+```bash
+cd ai-service
+.\start.ps1
+```
+Visit: http://localhost:8001/health
+Should see: {"status": "healthy", "gemini_api": "configured"}
+
+## 🐛 TROUBLESHOOTING
+
+### Backend won't start
+- Check SUPABASE_SERVICE_ROLE_KEY is correct (not anon key!)
+- Verify SUPABASE_URL format: https://xxxxx.supabase.co
+- Check port 8000 is not in use
+
+### Frontend can't connect
+- Check VITE_API_URL points to backend (http://localhost:8000)
+- Verify CORS_ORIGINS in backend includes frontend URL
+- Check VITE_SUPABASE_ANON_KEY (not service_role!)
+
+### AI service errors
+- Check GEMINI_API_KEY is valid
+- Verify API key starts with "AIza"
+- Check internet connection (API calls need internet)
+- Verify you haven't hit rate limit (15 req/min for free tier)
+
+## 📦 DISTRIBUTION TO TEAM
+
+### Option 1: Share Template Files
+Send these files:
+- nexzy-backend/.env.template.txt
+- nexzy-frontend/.env.template.txt
+- ai-service/.env.template.txt
+- ENV_FILES_GUIDE.txt (this file)
+
+Team members:
+1. Rename .env.template.txt → .env
+2. Fill in their own credentials
+3. Follow this guide
+
+### Option 2: Pre-filled Development .env (CAREFUL!)
+If team shares same Supabase project:
+1. Create .env files with actual dev values
+2. Share via SECURE channel (Slack DM, encrypted email, 1Password)
+3. NEVER share via public channel/commit to Git
+4. Use different credentials for production
+
+## 🌍 ENVIRONMENT-SPECIFIC CONFIGS
+
+### Development (Local)
+- API_HOST=127.0.0.1
+- VITE_API_URL=http://localhost:8000
+- DEBUG=true
+- LOG_LEVEL=DEBUG
+
+### Staging
+- API_HOST=0.0.0.0
+- VITE_API_URL=https://api-staging.nexzy.com
+- DEBUG=false
+- LOG_LEVEL=INFO
+
+### Production
+- API_HOST=0.0.0.0
+- VITE_API_URL=https://api.nexzy.com
+- DEBUG=false
+- LOG_LEVEL=WARNING
+- Use production Supabase project
+- Use production Gemini API key with higher limits
+
+## 📞 SUPPORT
+
+Questions? Check:
+- docs/QUICK_REFERENCE.md - Command reference
+- docs/setup/ - Setup guides
+- README.md - Project overview
+
+Contact: [Your contact info]
+
+## ✅ SETUP VERIFICATION
+
+All services running? Checklist:
+
+□ Backend: http://localhost:8000/docs shows API
+□ Frontend: http://localhost:5173 shows Nexzy
+□ AI Service: http://localhost:8001/health shows healthy
+□ Can login to Nexzy
+□ Can create scan
+□ Scans find credentials
+□ AI scoring works (if enabled)
+□ Alerts display properly
+
+If all checked, setup complete! 🎉
+
+==============================================================================

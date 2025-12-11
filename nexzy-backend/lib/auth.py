@@ -45,36 +45,18 @@ async def get_current_user(
         # Extract token from Authorization header
         token = credentials.credentials
         if not token:
-            logger.error("Authentication error: Missing Bearer token in Authorization header")
+            logger.warning("Authentication failed: Missing Bearer token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing Authorization Bearer token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-        # Debug: Compare token issuer to backend SUPABASE_URL (project alignment)
-        try:
-            parts = token.split('.')
-            if len(parts) >= 2:
-                payload_b64 = parts[1]
-                # Pad base64 if needed
-                padding = '=' * (-len(payload_b64) % 4)
-                payload_json = base64.urlsafe_b64decode(payload_b64 + padding).decode('utf-8')
-                payload = json.loads(payload_json)
-                iss = payload.get('iss', '')
-                backend_domain = SUPABASE_URL.split('//')[-1].split('/')[0]
-                iss_domain = iss.split('//')[-1].split('/')[0] if iss else ''
-                logger.info(f"Auth debug: token iss domain={iss_domain}, backend domain={backend_domain}")
-        except Exception as e:
-            logger.debug(f"Auth debug: failed to parse token issuer: {e}")
         
         # Verify token with Supabase
         try:
             user_response = supabase.auth.get_user(token)
         except Exception as e:
-            # Log the token length and last 8 chars for traceability (avoid full token)
-            safe_tail = token[-8:] if len(token) >= 8 else ""
-            logger.error(f"Supabase get_user failed (token_len={len(token)}, tail=...{safe_tail}): {e}")
+            logger.warning("Token verification failed")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token verification failed",

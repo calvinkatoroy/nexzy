@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { animate } from 'animejs';
-import { Loader, CheckCircle, AlertTriangle, X } from 'lucide-react';
+import { Loader, CheckCircle, AlertTriangle, X, FileText } from 'lucide-react';
 
-const ScanNotification = ({ scan, onClose }) => {
+const ScanNotification = ({ scan, onClose, onViewLogs }) => {
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
@@ -33,6 +33,9 @@ const ScanNotification = ({ scan, onClose }) => {
   };
 
   const getStatusText = () => {
+    // Use message from WebSocket if available
+    if (scan.message) return scan.message;
+    
     if (scan.status === 'pending') return 'Initializing scan...';
     if (scan.status === 'running') return `Scanning (${Math.round(progress)}%)`;
     if (scan.status === 'completed') return `Scan complete - ${scan.credentials_found || 0} credentials found`;
@@ -46,7 +49,11 @@ const ScanNotification = ({ scan, onClose }) => {
         <div className="flex items-center gap-3">
           {getStatusIcon()}
           <div>
-            <h3 className="text-sm font-bold text-white">Active Scan</h3>
+            <h3 className="text-sm font-bold text-white">
+              {scan.status === 'completed' ? 'Scan Completed' :
+               scan.status === 'failed' ? 'Scan Failed' :
+               'Scanning...'}
+            </h3>
             <p className="text-xs text-grey font-mono">ID: {scan.scan_id?.substring(0, 8)}</p>
           </div>
         </div>
@@ -71,7 +78,7 @@ const ScanNotification = ({ scan, onClose }) => {
         </div>
       )}
 
-      {scan.status === 'completed' && scan.total_results > 0 && (
+      {scan.status === 'completed' && scan.total_results !== undefined && (
         <div className="mt-3 pt-3 border-t border-white/10 text-xs text-grey">
           <div className="flex justify-between">
             <span>Results Found:</span>
@@ -82,6 +89,17 @@ const ScanNotification = ({ scan, onClose }) => {
             <span className="text-orange font-bold">{scan.credentials_found || 0}</span>
           </div>
         </div>
+      )}
+
+      {/* View Logs Button - Show for completed or failed scans */}
+      {(scan.status === 'completed' || scan.status === 'failed') && onViewLogs && (
+        <button
+          onClick={() => onViewLogs(scan)}
+          className="mt-3 w-full bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-bold"
+        >
+          <FileText size={16} />
+          View Full Logs
+        </button>
       )}
     </div>
   );

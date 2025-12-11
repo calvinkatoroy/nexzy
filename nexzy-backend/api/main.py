@@ -10,9 +10,9 @@ Main endpoints:
 - GET /health: Health check
 """
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi import FastAPI, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 import uuid
 import logging
@@ -20,6 +20,10 @@ from datetime import datetime
 import asyncio
 import sys
 import os
+from urllib.parse import urlparse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,6 +46,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
 # Create FastAPI app
 app = FastAPI(
     title="Nexzy API",
@@ -49,10 +56,14 @@ app = FastAPI(
     version="2.0.0"
 )
 
+# Add rate limiter state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=CORS_ORIGINS + ["http://localhost:5174"],  # Add port 5174 for dev server
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,12 +111,90 @@ manager = ConnectionManager()
 # PYDANTIC MODELS
 # ==============================================================================
 
+class SettingsUpdateRequest(BaseModel):
+    """Request model for updating user settings"""
+    target_domain: Optional[str] = Field(default=None, description="Target domain to monitor (e.g., 'ui.ac.id')")
+    target_keywords: Optional[List[str]] = Field(default=None, description="Keywords to search for", max_items=10)
+    organization: Optional[str] = Field(default=None, description="Organization name")
+
+
 class ScanRequest(BaseModel):
     """Request model for creating a new scan"""
-    urls: List[str] = Field(..., description="List of paste URLs to scan", min_items=1)
+    urls: Optional[List[str]] = Field(default=None, description="List of paste URLs to scan (optional if using keywords)", max_items=20)
+    keywords: Optional[List[str]] = Field(default=None, description="Keywords to search for (e.g., ['ui.ac.id', 'universitas indonesia'])", max_items=5)
+    auto_discover: bool = Field(default=False, description="Automatically discover pastes using keywords")
     enable_clearnet: bool = Field(default=True, description="Enable clearnet discovery")
     enable_darknet: bool = Field(default=False, description="Enable darknet discovery")
     crawl_authors: bool = Field(default=True, description="Crawl paste authors' profiles")
+    
+    @field_validator('urls')
+    @classmethod
+    def validate_urls(cls, urls: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate that all URLs are properly formatted and from allowed sources"""
+        if not urls:
+            return urls
+            
+        allowed_domains = [
+            'pastebin.com', 'paste.ee', 'privatebin.net',
+            'justpaste.it', 'pastelink.net', 'rentry.co',
+            'ghostbin.co', 'paste.ubuntu.com'
+        ]
+        
+        validated_urls = []
+        for url in urls:
+            # Parse URL
+            try:
+                parsed = urlparse(url)
+                
+                # Check scheme
+                if parsed.scheme not in ['http', 'https']:
+                    raise ValueError(f"Invalid URL scheme: {url}. Only http/https allowed.")
+                
+                # Check domain
+                domain = parsed.netloc.lower()
+                # Remove www. prefix
+                domain = domain.replace('www.', '')
+                
+                # Validate against allowed domains
+                if not any(domain.endswith(allowed) for allowed in allowed_domains):
+                    raise ValueError(f"Domain not allowed: {domain}. Allowed domains: {', '.join(allowed_domains)}")
+                
+                # Check for suspicious patterns (SSRF prevention)
+                if '@' in url or parsed.netloc.startswith('localhost') or parsed.netloc.startswith('127.'):
+                    raise ValueError(f"Suspicious URL pattern detected: {url}")
+                
+                validated_urls.append(url)
+                
+            except ValueError as e:
+                raise ValueError(str(e))
+            except Exception:
+                raise ValueError(f"Invalid URL format: {url}")
+        
+        return validated_urls
+    
+    @field_validator('keywords')
+    @classmethod
+    def validate_keywords(cls, keywords: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate keywords for auto-discovery"""
+        if not keywords:
+            return keywords
+        
+        # Clean and validate keywords
+        cleaned = []
+        for kw in keywords:
+            kw = kw.strip()
+            if len(kw) < 3:
+                raise ValueError(f"Keyword too short: '{kw}'. Minimum 3 characters.")
+            if len(kw) > 100:
+                raise ValueError(f"Keyword too long: '{kw}'. Maximum 100 characters.")
+            cleaned.append(kw)
+        
+        return cleaned
+    
+    def model_post_init(self, __context) -> None:
+        """Validate that either urls or keywords+auto_discover are provided"""
+        if not self.urls and not (self.keywords and self.auto_discover):
+            raise ValueError("Must provide either 'urls' or 'keywords' with 'auto_discover=true'")
 
 
 class ScanResponse(BaseModel):
@@ -154,7 +243,7 @@ async def run_scan_task(
     """
     Background task to execute the discovery scan.
     Updates database with progress and results.
-    Frontend polls the database for updates (no WebSocket in background task).
+    Broadcasts WebSocket messages for real-time updates.
     
     Args:
         scan_id: Unique identifier for this scan
@@ -162,8 +251,19 @@ async def run_scan_task(
         scan_request: Scan configuration
         supabase: Supabase client for database operations
     """
+    scan_logs = []  # Store scan logs for display
+    
+    def log_and_store(message: str, level: str = "INFO"):
+        """Log message and store for frontend display"""
+        logger.info(message)
+        scan_logs.append({
+            'timestamp': datetime.utcnow().isoformat(),
+            'level': level,
+            'message': message
+        })
+    
     try:
-        logger.info(f"[START] Starting scan {scan_id} for user {user_id}")
+        log_and_store(f"[START] Starting scan {scan_id} for user {user_id}")
         
         # Update scan status to 'running'
         supabase.table('scans').update({
@@ -172,7 +272,18 @@ async def run_scan_task(
             'updated_at': datetime.utcnow().isoformat()
         }).eq('id', scan_id).execute()
         
-        logger.info(f"[RUNNING] Scan {scan_id} status: running (10%)")
+        # Broadcast scan started
+        await manager.broadcast({
+            'type': 'scan_update',
+            'data': {
+                'scan_id': scan_id,
+                'status': 'running',
+                'progress': 0.1,
+                'message': 'Scan started successfully'
+            }
+        })
+        
+        log_and_store(f"[RUNNING] Scan {scan_id} status: running (10%)")
         
         # Update progress to 30%
         supabase.table('scans').update({
@@ -180,17 +291,49 @@ async def run_scan_task(
             'updated_at': datetime.utcnow().isoformat()
         }).eq('id', scan_id).execute()
         
-        logger.info(f"[PROGRESS] Scan {scan_id} progress: 30%")
+        await manager.broadcast({
+            'type': 'scan_update',
+            'data': {'scan_id': scan_id, 'status': 'running', 'progress': 0.3, 'message': 'Initializing discovery engine'}
+        })
+        
+        log_and_store(f"[PROGRESS] Scan {scan_id} progress: 30%")
         
         # Initialize and run Discovery Orchestrator
         orchestrator = DiscoveryOrchestrator()
         
-        logger.info(f"[DISCOVERY] Running discovery for {len(scan_request.urls)} URLs")
+        # Auto-discover URLs if keywords provided
+        urls_to_scan = scan_request.urls or []
+        
+        if scan_request.auto_discover and scan_request.keywords:
+            log_and_store(f"[AUTO-DISCOVER] Searching for keywords: {scan_request.keywords}")
+            discovered_urls = orchestrator.search_by_keywords(
+                keywords=scan_request.keywords,
+                limit=50  # Discover up to 50 relevant pastes
+            )
+            urls_to_scan.extend(discovered_urls)
+            log_and_store(f"[AUTO-DISCOVER] Found {len(discovered_urls)} relevant URLs")
+            
+            # Update progress
+            supabase.table('scans').update({
+                'progress': 0.4,
+                'updated_at': datetime.utcnow().isoformat()
+            }).eq('id', scan_id).execute()
+            
+            await manager.broadcast({
+                'type': 'scan_update',
+                'data': {'scan_id': scan_id, 'status': 'running', 'progress': 0.4, 'message': f'Discovered {len(discovered_urls)} URLs'}
+            })
+        
+        if not urls_to_scan:
+            raise Exception("No URLs to scan. Auto-discovery found no relevant pastes.")
+        
+        log_and_store(f"[DISCOVERY] Running discovery for {len(urls_to_scan)} URLs (Darknet: {scan_request.enable_darknet})")
         results = orchestrator.run_full_discovery(
-            clearnet_urls=scan_request.urls,
+            clearnet_urls=urls_to_scan,
             enable_clearnet=scan_request.enable_clearnet,
             enable_darknet=scan_request.enable_darknet,
-            crawl_authors=scan_request.crawl_authors
+            crawl_authors=scan_request.crawl_authors,
+            darkweb_keywords=scan_request.keywords if scan_request.enable_darknet else None
         )
         
         # Update progress to 70%
@@ -199,14 +342,19 @@ async def run_scan_task(
             'updated_at': datetime.utcnow().isoformat()
         }).eq('id', scan_id).execute()
         
-        logger.info(f"[PROGRESS] Scan {scan_id} progress: 70%")
+        await manager.broadcast({
+            'type': 'scan_update',
+            'data': {'scan_id': scan_id, 'status': 'running', 'progress': 0.7, 'message': 'Analyzing results'}
+        })
+        
+        log_and_store(f"[PROGRESS] Scan {scan_id} progress: 70%")
         
         # Process and insert results into database
         discovered_items = results.get('discovered_items', [])
         total_results = len(discovered_items)
         credentials_found = 0
         
-        logger.info(f"[RESULTS] Scan {scan_id} found {total_results} results")
+        log_and_store(f"[RESULTS] Scan {scan_id} found {total_results} results")
         
         # Insert results into scan_results table
         for item in discovered_items:
@@ -290,6 +438,7 @@ async def run_scan_task(
                     ai_rationale = ai_data.get('rationale', '')
                     ai_alert_level = ai_data.get('alerts', 'LOW')
                     ai_signals = ai_data.get('signals', [])
+                    ai_mitigation = ai_data.get('mitigation', '')
                     
                     # Determine severity based on AI score (if available) + target emails
                     target_email_count = len(result.get('target_emails', []))
@@ -328,6 +477,9 @@ async def run_scan_task(
                     if ai_signals:
                         description += f"\n\nDetected Signals: {', '.join(ai_signals)}"
                     
+                    if ai_mitigation:
+                        description += f"\n\n🛡️ MITIGATION RECOMMENDATIONS:\n{ai_mitigation}"
+                    
                     description += f"\n\nSource URL: {result.get('url', 'N/A')}"
                     
                     if ai_score > 0:
@@ -354,19 +506,33 @@ async def run_scan_task(
             
             logger.info(f"[DONE] Created {alerts_created} alerts from {credentials_found} credential leaks")
         
-        # Update scan to completed with credentials count
+        # Update scan to completed with credentials count and logs
         supabase.table('scans').update({
             'status': 'completed',
             'progress': 1.0,
             'total_results': total_results,
             'credentials_found': credentials_found,
+            'logs': scan_logs,
             'updated_at': datetime.utcnow().isoformat()
         }).eq('id', scan_id).execute()
         
-        logger.info(f"[SUCCESS] Scan {scan_id} completed successfully - {total_results} results, {credentials_found} credentials, {alerts_created} alerts")
+        log_and_store(f"[SUCCESS] Scan {scan_id} completed successfully - {total_results} results, {credentials_found} credentials, {alerts_created} alerts")
+        
+        # Broadcast scan completed
+        await manager.broadcast({
+            'type': 'scan_update',
+            'data': {
+                'scan_id': scan_id,
+                'status': 'completed',
+                'progress': 1.0,
+                'total_results': total_results,
+                'credentials_found': credentials_found,
+                'message': f'Scan completed! Found {credentials_found} credentials in {total_results} results'
+            }
+        })
         
     except Exception as e:
-        logger.error(f"[FAILED] Scan {scan_id} failed: {str(e)}")
+        log_and_store(f"[FAILED] Scan {scan_id} failed: {str(e)}", "ERROR")
         logger.exception(e)
         
         # Update scan status to failed
@@ -374,10 +540,22 @@ async def run_scan_task(
             supabase.table('scans').update({
                 'status': 'failed',
                 'error': str(e),
+                'logs': scan_logs,
                 'updated_at': datetime.utcnow().isoformat()
             }).eq('id', scan_id).execute()
             
-            logger.info(f"[DB] Updated scan {scan_id} status to failed")
+            log_and_store(f"[DB] Updated scan {scan_id} status to failed")
+            
+            # Broadcast scan failed
+            await manager.broadcast({
+                'type': 'scan_update',
+                'data': {
+                    'scan_id': scan_id,
+                    'status': 'failed',
+                    'progress': 0,
+                    'message': f'Scan failed: {str(e)}'
+                }
+            })
         except Exception as db_error:
             logger.error(f"[ERROR] Failed to update scan failure status: {db_error}")
 
@@ -502,8 +680,143 @@ async def get_stats(
         raise HTTPException(status_code=500, detail="Failed to compute stats")
 
 
+@app.get("/api/settings")
+@limiter.limit("30/minute")
+async def get_user_settings(
+    request: Request,
+    current_user: Dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """Get user's monitoring settings (target domain, keywords, etc.)"""
+    try:
+        user_id = current_user['id']
+        response = supabase.table('user_profiles').select('*').eq('id', user_id).single().execute()
+        
+        if response.data:
+            return response.data
+        else:
+            # Create default profile
+            default = {'id': user_id, 'email': current_user.get('email'), 
+                      'target_domain': 'ui.ac.id', 'target_keywords': ['ui.ac.id', 'universitas indonesia']}
+            supabase.table('user_profiles').insert(default).execute()
+            return default
+    except Exception as e:
+        logger.error(f"Failed to get settings: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve settings")
+
+
+@app.put("/api/settings")
+@limiter.limit("10/minute")
+async def update_user_settings(
+    request: Request,
+    settings: SettingsUpdateRequest,
+    current_user: Dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """Update user's monitoring settings"""
+    try:
+        user_id = current_user['id']
+        update_data = {'updated_at': datetime.utcnow().isoformat()}
+        
+        if settings.target_domain:
+            if len(settings.target_domain) < 3 or '.' not in settings.target_domain:
+                raise HTTPException(status_code=400, detail="Invalid domain format")
+            update_data['target_domain'] = settings.target_domain.lower()
+        
+        if settings.target_keywords is not None:
+            if len(settings.target_keywords) > 10:
+                raise HTTPException(status_code=400, detail="Maximum 10 keywords allowed")
+            update_data['target_keywords'] = settings.target_keywords
+        
+        if settings.organization:
+            update_data['organization'] = settings.organization
+        
+        response = supabase.table('user_profiles').update(update_data).eq('id', user_id).execute()
+        
+        if not response.data:
+            # Create new profile if doesn't exist
+            profile = {
+                'id': user_id, 
+                'email': current_user.get('email'), 
+                'target_domain': settings.target_domain or 'ui.ac.id', 
+                'target_keywords': settings.target_keywords or ['ui.ac.id'],
+                'created_at': datetime.utcnow().isoformat(),
+                'updated_at': datetime.utcnow().isoformat()
+            }
+            if settings.organization:
+                profile['organization'] = settings.organization
+            response = supabase.table('user_profiles').insert(profile).execute()
+        
+        return {"success": True, "data": response.data[0] if response.data else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update settings: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update settings")
+
+
+@app.post("/api/scan/quick")
+@limiter.limit("5/minute")
+async def quick_scan(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: Dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    ONE-CLICK QUICK SCAN
+    Automatically starts a scan using user's configured settings.
+    Perfect for a "Scan Now" button!
+    """
+    try:
+        user_id = current_user['id']
+        
+        # Get user's settings
+        settings_response = supabase.table('user_profiles').select('target_domain, target_keywords').eq('id', user_id).single().execute()
+        
+        if settings_response.data:
+            target_domain = settings_response.data.get('target_domain', 'ui.ac.id')
+            target_keywords = settings_response.data.get('target_keywords', ['ui.ac.id', 'universitas indonesia'])
+        else:
+            target_domain = 'ui.ac.id'
+            target_keywords = ['ui.ac.id', 'universitas indonesia']
+        
+        # Create scan request automatically
+        scan_request = ScanRequest(keywords=target_keywords, auto_discover=True, crawl_authors=True)
+        scan_id = str(uuid.uuid4())
+        
+        logger.info(f"🚀 QUICK SCAN: {scan_id} for {user_id} - Target: {target_domain}")
+        
+        # Create scan record
+        scan_data = {
+            'id': scan_id, 'user_id': user_id, 'status': 'queued', 'progress': 0.0,
+            'total_results': 0, 'credentials_found': 0, 'urls': [],
+            'options': {'quick_scan': True, 'target_domain': target_domain, 'keywords': target_keywords,
+                       'auto_discover': True, 'crawl_authors': True},
+            'created_at': datetime.utcnow().isoformat(), 'updated_at': datetime.utcnow().isoformat()
+        }
+        
+        result = supabase.table('scans').insert(scan_data).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create scan")
+        
+        # Schedule background task
+        asyncio.create_task(run_scan_task(scan_id=scan_id, user_id=user_id, scan_request=scan_request, supabase=supabase))
+        
+        return ScanResponse(scan_id=scan_id, status='queued', 
+                          message=f'Quick scan started! Monitoring {target_domain} for leaks...', 
+                          created_at=datetime.utcnow().isoformat())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Quick scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Quick scan failed: {str(e)}")
+
+
 @app.post("/api/scan", response_model=ScanResponse)
+@limiter.limit("5/minute")
 async def create_scan(
+    request: Request,
     scan_request: ScanRequest,
     background_tasks: BackgroundTasks,
     current_user: Dict = Depends(get_current_user),
@@ -597,15 +910,22 @@ async def create_scan(
 
 
 @app.get("/api/scans", response_model=List[ScanStatus])
+@limiter.limit("30/minute")
 async def list_scans(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
     current_user: Dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
     """
-    List all scans for the authenticated user.
+    List all scans for the authenticated user with pagination.
     Returns scans ordered by creation date (newest first).
     
     Args:
+        request: FastAPI request object (for rate limiting)
+        limit: Maximum number of scans to return (default: 50, max: 100)
+        offset: Number of scans to skip (default: 0)
         current_user: Authenticated user from JWT token
         supabase: Supabase client instance
         
@@ -615,11 +935,16 @@ async def list_scans(
     try:
         user_id = current_user['id']
         
-        # Query scans from database
+        # Validate and cap limit
+        limit = min(limit, 100) if limit > 0 else 50
+        offset = max(offset, 0)
+        
+        # Query scans from database with pagination
         response = supabase.table('scans')\
             .select('*')\
             .eq('user_id', user_id)\
             .order('created_at', desc=True)\
+            .range(offset, offset + limit - 1)\
             .execute()
         
         scans = []
@@ -644,16 +969,74 @@ async def list_scans(
         )
 
 
-@app.get("/api/alerts")
-async def list_alerts(
+@app.get("/api/scans/{scan_id}")
+@limiter.limit("30/minute")
+async def get_scan_by_id(
+    request: Request,
+    scan_id: str,
     current_user: Dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
     """
-    List all alerts for the authenticated user.
+    Get a specific scan by ID with full details including logs.
+    
+    Args:
+        request: FastAPI request object (for rate limiting)
+        scan_id: Unique identifier for the scan
+        current_user: Authenticated user from JWT token
+        supabase: Supabase client instance
+        
+    Returns:
+        Complete scan object including logs
+    """
+    try:
+        user_id = current_user['id']
+        
+        # Query scan from database
+        response = supabase.table('scans')\
+            .select('*')\
+            .eq('id', scan_id)\
+            .eq('user_id', user_id)\
+            .single()\
+            .execute()
+        
+        if not response.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Scan {scan_id} not found"
+            )
+        
+        return response.data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve scan {scan_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve scans: {str(e)}"
+        )
+
+
+@app.get("/api/alerts")
+@limiter.limit("30/minute")
+async def list_alerts(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    severity: Optional[str] = None,
+    current_user: Dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    List all alerts for the authenticated user with pagination.
     Returns alerts ordered by creation date (newest first).
     
     Args:
+        request: FastAPI request object (for rate limiting)
+        limit: Maximum number of alerts to return (default: 50, max: 100)
+        offset: Number of alerts to skip (default: 0)
+        severity: Filter by severity (low, medium, high, critical)
         current_user: Authenticated user from JWT token
         supabase: Supabase client instance
         
@@ -663,11 +1046,22 @@ async def list_alerts(
     try:
         user_id = current_user['id']
         
-        # Query alerts from database
-        response = supabase.table('alerts')\
+        # Validate and cap limit
+        limit = min(limit, 100) if limit > 0 else 50
+        offset = max(offset, 0)
+        
+        # Build query
+        query = supabase.table('alerts')\
             .select('*')\
-            .eq('user_id', user_id)\
-            .order('created_at', desc=True)\
+            .eq('user_id', user_id)
+        
+        # Apply severity filter if provided
+        if severity:
+            query = query.eq('severity', severity.lower())
+        
+        # Apply pagination and ordering
+        response = query.order('created_at', desc=True)\
+            .range(offset, offset + limit - 1)\
             .execute()
         
         return response.data
@@ -681,30 +1075,41 @@ async def list_alerts(
 
 
 @app.get("/api/search")
+@limiter.limit("30/minute")
 async def search_results(
+    request: Request,
     q: Optional[str] = None,
     source: Optional[str] = None,
     min_score: Optional[float] = None,
     has_credentials: Optional[bool] = None,
     email_domain: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
     current_user: Dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
     """
-    Search scan results with filters.
+    Search scan results with filters and pagination.
     
     Query params:
+        request: FastAPI request object (for rate limiting)
         q: Keyword search in URL, content, author
         source: Filter by source (pastebin, github, etc)
         min_score: Minimum relevance score (0.0-1.0)
         has_credentials: Filter results with credentials
         email_domain: Filter by email domain
+        limit: Maximum results to return (default: 50, max: 100)
+        offset: Number of results to skip (default: 0)
         
     Returns:
         List of matching scan results with alert IDs
     """
     try:
         user_id = current_user['id']
+        
+        # Validate and cap limit
+        limit = min(limit, 100) if limit > 0 else 50
+        offset = max(offset, 0)
         
         # Get all user's alerts (which link to scan results via description URL)
         alerts_response = supabase.table('alerts')\
@@ -760,8 +1165,10 @@ async def search_results(
         if has_credentials is not None:
             query = query.eq('has_credentials', has_credentials)
         
-        # Execute query
-        results_response = query.order('found_at', desc=True).execute()
+        # Execute query with pagination
+        results_response = query.order('found_at', desc=True) \
+            .range(offset, offset + limit - 1) \
+            .execute()
         results = results_response.data
         
         # Add alert_id to each result (exact match), else try normalized
@@ -796,7 +1203,7 @@ async def search_results(
                 if any(domain_lower in email.lower() for email in r.get('target_emails', []))
             ]
         
-        logger.info(f"Search returned {len(results)} results for user {user_id}")
+        logger.info(f"Search returned {len(results)} results for user {user_id} (limit={limit}, offset={offset})")
         return results
         
     except Exception as e:

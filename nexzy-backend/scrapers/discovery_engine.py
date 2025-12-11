@@ -31,7 +31,7 @@ try:
     from config import (
         TARGET_DOMAIN, REQUEST_DELAY, MAX_RETRIES,
         MIN_RELEVANCE_SCORE, LEAK_KEYWORDS, USER_AGENTS,
-        CLEARNET_SOURCES
+        CLEARNET_SOURCES, DARKWEB_SOURCES, TOR_PROXY_ENABLED, TOR_PROXY_URL
     )
 except ImportError:
     # Fallback defaults if config not available
@@ -45,6 +45,9 @@ except ImportError:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
     ]
     CLEARNET_SOURCES = ["https://pastebin.com"]
+    DARKWEB_SOURCES = []
+    TOR_PROXY_ENABLED = False
+    TOR_PROXY_URL = None
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -61,6 +64,334 @@ class DiscoveryOrchestrator:
         self.session = requests.Session()
         self.discovered_urls = set()
         self.processed_authors = set()
+        
+        # Setup Tor proxy if enabled
+        if TOR_PROXY_ENABLED and TOR_PROXY_URL:
+            self.tor_session = requests.Session()
+            self.tor_session.proxies = {
+                'http': TOR_PROXY_URL,
+                'https': TOR_PROXY_URL
+            }
+            logger.info(f"Tor proxy enabled: {TOR_PROXY_URL}")
+        else:
+            self.tor_session = None
+    
+    def search_pastebin_by_keyword(self, keyword: str, limit: int = 50) -> List[str]:
+        """
+        Search Pastebin using their search functionality.
+        Scrapes search results for pastes containing the keyword.
+        
+        Args:
+            keyword: Search keyword (e.g., "ui.ac.id", "universitas indonesia")
+            limit: Maximum number of URLs to return
+            
+        Returns:
+            List of paste URLs from search results
+        """
+        discovered_urls = []
+        
+        try:
+            # Method 1: Use Pastebin search (searches public pastes)
+            logger.info(f"[PASTEBIN SEARCH] Searching for: {keyword}")
+            search_url = f"https://pastebin.com/search?q={keyword}"
+            
+            response = self._make_request(search_url)
+            if not response:
+                logger.warning("[PASTEBIN SEARCH] Failed to fetch search page")
+                return self._fallback_archive_search(keyword, limit)
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find paste links in search results
+            # Pastebin search results have links with class "i_p0" or in <li> tags
+            paste_containers = soup.find_all('li', class_='gsc-result')  # Google Custom Search results
+            if not paste_containers:
+                # Try alternative structure
+                paste_containers = soup.find_all('div', class_='gsc-webResult')
+            
+            if not paste_containers:
+                # Pastebin might use simple list
+                paste_links = soup.find_all('a', href=True)
+                for link in paste_links:
+                    href = link.get('href', '')
+                    # Match pastebin.com/xxxxxxxx pattern
+                    if 'pastebin.com/' in href and '/' in href.split('pastebin.com/')[-1]:
+                        paste_id = href.split('pastebin.com/')[-1].split('/')[0]
+                        if paste_id and len(paste_id) == 8 and paste_id.isalnum():
+                            paste_url = f"https://pastebin.com/{paste_id}"
+                            if paste_url not in self.discovered_urls:
+                                discovered_urls.append(paste_url)
+                                self.discovered_urls.add(paste_url)
+                                logger.info(f"  ✓ Found: {paste_url}")
+                                
+                                if len(discovered_urls) >= limit:
+                                    break
+            else:
+                # Parse Google Custom Search results
+                for container in paste_containers:
+                    link = container.find('a', href=True)
+                    if link:
+                        href = link.get('href', '')
+                        if 'pastebin.com/' in href:
+                            paste_id = href.split('pastebin.com/')[-1].split('/')[0].split('?')[0]
+                            if paste_id and len(paste_id) == 8:
+                                paste_url = f"https://pastebin.com/{paste_id}"
+                                if paste_url not in self.discovered_urls:
+                                    discovered_urls.append(paste_url)
+                                    self.discovered_urls.add(paste_url)
+                                    logger.info(f"  ✓ Found: {paste_url}")
+                                    
+                                    if len(discovered_urls) >= limit:
+                                        break
+            
+            # If search didn't return results, fallback to archive scraping
+            if not discovered_urls:
+                logger.info("[PASTEBIN SEARCH] No results found, trying archive fallback...")
+                return self._fallback_archive_search(keyword, limit)
+            
+            logger.info(f"[PASTEBIN SEARCH] Found {len(discovered_urls)} pastes")
+            
+        except Exception as e:
+            logger.error(f"[PASTEBIN SEARCH] Error: {e}")
+            # Fallback to archive search
+            return self._fallback_archive_search(keyword, limit)
+        
+        return discovered_urls
+    
+    def _fallback_archive_search(self, keyword: str, limit: int = 50) -> List[str]:
+        """
+        Fallback method: Scrape recent archive and filter by keyword in content.
+        This is slower but works when search is unavailable.
+        
+        Args:
+            keyword: Search keyword
+            limit: Maximum URLs to return
+            
+        Returns:
+            List of paste URLs containing the keyword
+        """
+        discovered_urls = []
+        
+        try:
+            logger.info(f"[ARCHIVE FALLBACK] Scraping recent pastes for: {keyword}")
+            archive_url = "https://pastebin.com/archive"
+            
+            response = self._make_request(archive_url)
+            if not response:
+                logger.warning("[ARCHIVE FALLBACK] Failed to fetch archive")
+                return discovered_urls
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find paste links in archive
+            paste_links = soup.find_all('a', href=True)
+            checked_count = 0
+            
+            for link in paste_links:
+                href = link.get('href', '')
+                
+                # Match paste URL pattern (format: /xxxxxxxx)
+                if href.startswith('/') and len(href) == 9 and href[1:].isalnum():
+                    paste_url = f"https://pastebin.com{href}"
+                    
+                    if paste_url not in self.discovered_urls:
+                        # Download and check content
+                        paste_response = self._make_request(paste_url)
+                        checked_count += 1
+                        
+                        if paste_response and keyword.lower() in paste_response.text.lower():
+                            discovered_urls.append(paste_url)
+                            self.discovered_urls.add(paste_url)
+                            logger.info(f"  ✓ Match found: {paste_url}")
+                            
+                            if len(discovered_urls) >= limit:
+                                break
+                        
+                        # Limit number of pastes checked to avoid rate limiting
+                        if checked_count >= min(100, limit * 5):
+                            logger.info(f"[ARCHIVE FALLBACK] Checked {checked_count} pastes, stopping")
+                            break
+            
+            logger.info(f"[ARCHIVE FALLBACK] Found {len(discovered_urls)} matching pastes from {checked_count} checked")
+            
+        except Exception as e:
+            logger.error(f"[ARCHIVE FALLBACK] Error: {e}")
+        
+        return discovered_urls
+    
+    def search_by_keywords(self, keywords: List[str], limit: int = 50) -> List[str]:
+        """
+        Automatically search multiple paste sites for keywords using their search functionality.
+        
+        Args:
+            keywords: List of keywords to search for (e.g., ["ui.ac.id", "universitas indonesia"])
+            limit: Maximum total URLs to discover
+            
+        Returns:
+            List of discovered paste URLs
+        """
+        all_urls = []
+        per_keyword_limit = max(10, limit // len(keywords)) if len(keywords) > 0 else limit
+        
+        for keyword in keywords:
+            logger.info(f"[KEYWORD SEARCH] Searching for: {keyword}")
+            
+            # Search Pastebin using search functionality
+            pastebin_urls = self.search_pastebin_by_keyword(keyword, limit=per_keyword_limit)
+            all_urls.extend(pastebin_urls)
+            
+            logger.info(f"[KEYWORD SEARCH] Found {len(pastebin_urls)} pastes for '{keyword}'")
+            
+            # TODO: Add search for other paste sites (Paste.ee, Ghostbin, etc.)
+            # Most paste sites don't have public search, but we can try archive scraping
+            
+            if len(all_urls) >= limit:
+                break
+            
+            # Small delay between keyword searches to avoid rate limiting
+            time.sleep(1)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = []
+        for url in all_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+        
+        logger.info(f"[KEYWORD SEARCH] Total discovered: {len(unique_urls)} unique URLs")
+        return unique_urls[:limit]
+    
+    def search_darkweb_pastes(self, keywords: List[str], limit: int = 30) -> List[str]:
+        """
+        Search darkweb paste sites (via clearnet mirrors) for keywords.
+        
+        Note: This uses clearnet mirrors of darkweb sites. For actual .onion access,
+        you need Tor proxy configured (TOR_PROXY_ENABLED=true).
+        
+        Args:
+            keywords: List of keywords to search for
+            limit: Maximum URLs to discover
+            
+        Returns:
+            List of discovered paste URLs from darkweb sources
+        """
+        if not DARKWEB_SOURCES:
+            logger.warning("No darkweb sources configured")
+            return []
+        
+        logger.info(f"[DARKWEB] Searching {len(DARKWEB_SOURCES)} darkweb paste sites")
+        all_urls = []
+        
+        for source in DARKWEB_SOURCES:
+            try:
+                logger.info(f"[DARKWEB] Scraping: {source}")
+                
+                # Use Tor session if available, otherwise regular session
+                session = self.tor_session if self.tor_session else self.session
+                
+                # Fetch recent pastes from darkweb site
+                urls = self._scrape_darkweb_recent(source, session, keywords, limit // len(DARKWEB_SOURCES))
+                all_urls.extend(urls)
+                
+                if len(all_urls) >= limit:
+                    break
+                    
+            except Exception as e:
+                logger.error(f"[DARKWEB] Failed to scrape {source}: {e}")
+                continue
+        
+        logger.info(f"[DARKWEB] Total discovered URLs: {len(all_urls)}")
+        return all_urls[:limit]
+    
+    def _scrape_darkweb_recent(self, base_url: str, session: requests.Session, keywords: List[str], limit: int = 10) -> List[str]:
+        """
+        Scrape recent pastes from a darkweb paste site.
+        
+        Args:
+            base_url: Base URL of the darkweb paste site
+            session: Request session to use (Tor or regular)
+            keywords: Keywords to search for in paste content
+            limit: Maximum pastes to return
+            
+        Returns:
+            List of paste URLs containing keywords
+        """
+        discovered = []
+        
+        try:
+            # Try common paste listing endpoints
+            listing_paths = [
+                "/recent",
+                "/archive", 
+                "/list",
+                "/pastes",
+                "/"  # Some sites list on homepage
+            ]
+            
+            for path in listing_paths:
+                try:
+                    url = f"{base_url}{path}"
+                    headers = {
+                        'User-Agent': self._get_random_user_agent(),
+                        'Accept': 'text/html,application/xhtml+xml',
+                    }
+                    
+                    response = session.get(url, headers=headers, timeout=30)
+                    
+                    if response.status_code != 200:
+                        continue
+                    
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # Find paste links (common patterns)
+                    paste_links = []
+                    
+                    # Pattern 1: /view/xxxxxx or /p/xxxxx
+                    for link in soup.find_all('a', href=True):
+                        href = link.get('href', '')
+                        if any(pattern in href for pattern in ['/view/', '/p/', '/paste/', '/show/']):
+                            full_url = urljoin(base_url, href)
+                            paste_links.append(full_url)
+                    
+                    # Check each paste for keywords
+                    for paste_url in paste_links[:limit * 2]:  # Check more to find relevant ones
+                        if paste_url in self.discovered_urls:
+                            continue
+                        
+                        try:
+                            paste_response = session.get(paste_url, headers=headers, timeout=20)
+                            if paste_response.status_code == 200:
+                                content = paste_response.text.lower()
+                                
+                                # Check if any keyword matches
+                                if any(kw.lower() in content for kw in keywords):
+                                    discovered.append(paste_url)
+                                    self.discovered_urls.add(paste_url)
+                                    logger.info(f"[DARKWEB] Found relevant paste: {paste_url}")
+                                    
+                                    if len(discovered) >= limit:
+                                        return discovered
+                            
+                            # Rate limiting - darkweb sites are slower
+                            time.sleep(REQUEST_DELAY * 2)
+                            
+                        except Exception as e:
+                            logger.debug(f"[DARKWEB] Failed to fetch paste {paste_url}: {e}")
+                            continue
+                    
+                    # If we found pastes in this path, don't try others
+                    if paste_links:
+                        break
+                        
+                except Exception as e:
+                    logger.debug(f"[DARKWEB] Failed to access {url}: {e}")
+                    continue
+            
+        except Exception as e:
+            logger.error(f"[DARKWEB] Error scraping {base_url}: {e}")
+        
+        return discovered
         
     def _get_random_user_agent(self) -> str:
         """Return a random user agent string to avoid detection"""
@@ -476,16 +807,18 @@ class DiscoveryOrchestrator:
         clearnet_urls: List[str] = None,
         enable_clearnet: bool = True,
         enable_darknet: bool = False,
-        crawl_authors: bool = True
+        crawl_authors: bool = True,
+        darkweb_keywords: List[str] = None
     ) -> Dict:
         """
-        Run complete discovery across provided URLs.
+        Run complete discovery across provided URLs and darkweb sources.
         
         Args:
             clearnet_urls: Initial list of paste URLs to analyze
             enable_clearnet: Whether to enable clearnet discovery
-            enable_darknet: Whether to enable darknet (not implemented)
+            enable_darknet: Whether to enable darknet paste searching
             crawl_authors: Whether to crawl paste authors' profiles
+            darkweb_keywords: Keywords to search on darkweb (if None, uses clearnet_urls keywords)
             
         Returns:
             Dictionary with all results and metadata
@@ -493,22 +826,38 @@ class DiscoveryOrchestrator:
         logger.info("=" * 70)
         logger.info("NEXZY DISCOVERY ENGINE - STARTING SCAN")
         logger.info(f"Target Domain: {TARGET_DOMAIN}")
+        logger.info(f"Clearnet: {enable_clearnet}, Darkweb: {enable_darknet}")
         logger.info(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"URLs to scan: {len(clearnet_urls) if clearnet_urls else 0}")
         logger.info("=" * 70)
         
         all_results = []
+        darkweb_urls = []
         
-        if not enable_clearnet or not clearnet_urls:
-            logger.warning("No URLs provided or clearnet disabled")
+        # Darkweb discovery (if enabled)
+        if enable_darknet:
+            try:
+                logger.info("[DARKWEB] Starting darkweb paste discovery...")
+                keywords = darkweb_keywords or [TARGET_DOMAIN]
+                darkweb_urls = self.search_darkweb_pastes(keywords, limit=30)
+                logger.info(f"[DARKWEB] Discovered {len(darkweb_urls)} darkweb paste URLs")
+            except Exception as e:
+                logger.error(f"[DARKWEB] Failed to search darkweb: {e}")
+                darkweb_urls = []
+        
+        # Combine clearnet and darkweb URLs
+        all_urls = (clearnet_urls or []) + darkweb_urls
+        
+        if not all_urls:
+            logger.warning("No URLs to process (clearnet and darkweb both empty)")
             return {
                 'discovered_items': all_results,
                 'total_found': 0,
                 'scan_time': datetime.utcnow().isoformat()
             }
         
-        # Process initial URLs
-        for url in clearnet_urls:
+        # Process all URLs (clearnet + darkweb)
+        for url in all_urls:
             try:
                 result = self.analyze_paste(url)
                 if result:
@@ -516,11 +865,13 @@ class DiscoveryOrchestrator:
                     
                     # Optionally crawl author's other pastes
                     if crawl_authors and result['author'] != 'unknown':
-                        author_results = self.crawl_user_pastes(
-                            result['author'],
-                            f"https://{result['source']}"
-                        )
-                        all_results.extend(author_results)
+                        # Only crawl clearnet authors (darkweb authors might not have profiles)
+                        if not any(dweb in url for dweb in DARKWEB_SOURCES):
+                            author_results = self.crawl_user_pastes(
+                                result['author'],
+                                f"https://{result['source']}"
+                            )
+                            all_results.extend(author_results)
                         
             except Exception as e:
                 logger.error(f"Error processing {url}: {e}")
@@ -530,6 +881,7 @@ class DiscoveryOrchestrator:
         
         logger.info("=" * 70)
         logger.info(f"DISCOVERY COMPLETE - Found {len(all_results)} relevant items")
+        logger.info(f"Clearnet URLs: {len(clearnet_urls or [])}, Darkweb URLs: {len(darkweb_urls)}")
         logger.info("=" * 70)
         
         return {
@@ -537,7 +889,8 @@ class DiscoveryOrchestrator:
             'total_found': len(all_results),
             'target_domain': TARGET_DOMAIN,
             'scan_time': datetime.utcnow().isoformat(),
-            'urls_scanned': len(clearnet_urls)
+            'urls_scanned': len(all_urls),
+            'darkweb_urls_found': len(darkweb_urls)
         }
 
 

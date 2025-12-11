@@ -1,233 +1,214 @@
 import React, { useEffect, useState } from 'react';
 import { animate, stagger } from 'animejs';
-import { Save, User, Shield, Bell, Database, Monitor, Copy, Check } from 'lucide-react';
+import { Save, RefreshCw, Settings as SettingsIcon, Globe, Tag } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-
-const SettingsSection = ({ title, icon: Icon, children }) => (
-  <div className="settings-section opacity-0 mb-8">
-    <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-2">
-      <Icon className="text-skyblue" size={18} />
-      <h3 className="text-sm font-bold text-white uppercase tracking-wider">{title}</h3>
-    </div>
-    <div className="space-y-4">
-      {children}
-    </div>
-  </div>
-);
-
-const Toggle = ({ label, checked, onChange }) => (
-  <div className="flex justify-between items-center bg-white/5 p-3 rounded-lg border border-white/5 hover:border-white/10 transition-colors">
-    <span className="text-sm text-grey">{label}</span>
-    <div 
-      onClick={() => onChange(!checked)}
-      className={`w-10 h-5 rounded-full relative cursor-pointer transition-colors ${
-        checked ? 'bg-green' : 'bg-white/10'
-      }`}
-    >
-      <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${
-        checked ? 'left-6' : 'left-1'
-      }`} />
-    </div>
-  </div>
-);
-
-const InputField = ({ label, value, onChange, type = "text", readOnly = false }) => (
-  <div>
-    <label className="text-xs text-grey ml-1 mb-1 block">{label}</label>
-    <input 
-      type={type} 
-      value={value}
-      onChange={(e) => onChange && onChange(e.target.value)}
-      readOnly={readOnly}
-      className="w-full bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-white font-mono focus:border-lavender outline-none transition-colors disabled:opacity-50" 
-    />
-  </div>
-);
+import { api } from '../lib/api';
+import { useToast } from '../contexts/ToastContext';
 
 const Settings = () => {
   const { user } = useAuth();
-  const [copied, setCopied] = useState(false);
+  const { showToast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState({
-    displayName: user?.user_metadata?.full_name || 'Agent',
-    email: user?.email || '',
-    department: 'Threat Intelligence Unit',
-    highContrast: false,
-    reducedMotion: false,
-    criticalAlerts: true,
-    dailyDigest: true,
-    systemReports: false,
-    maxThreads: 12,
-    scanInterval: 30
+    target_domain: 'ui.ac.id',
+    target_keywords: ['ui.ac.id', 'universitas indonesia']
   });
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    animate('.settings-section', {
-      opacity: [0, 1],
-      y: [20, 0],
-      delay: stagger(100),
-      easing: 'outQuad'
-    });
+    loadSettings();
   }, []);
 
-  const handleSave = () => {
-    // Save settings to localStorage
-    localStorage.setItem('nexzy_settings', JSON.stringify(settings));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const loadSettings = async () => {
+    try {
+      setLoading(true);
+      const data = await api.getSettings();
+      setSettings({
+        target_domain: data.target_domain || 'ui.ac.id',
+        target_keywords: data.target_keywords || ['ui.ac.id', 'universitas indonesia']
+      });
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+      showToast && showToast('Failed to load settings', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const copyApiKey = () => {
-    navigator.clipboard.writeText('sk_live_9384759283745928734');
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      await api.updateSettings(settings);
+      showToast && showToast('Settings saved successfully', 'success');
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      showToast && showToast('Failed to save settings', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const handleKeywordChange = (index, value) => {
+    const newKeywords = [...settings.target_keywords];
+    newKeywords[index] = value;
+    setSettings({ ...settings, target_keywords: newKeywords });
+  };
+
+  const addKeyword = () => {
+    setSettings({
+      ...settings,
+      target_keywords: [...settings.target_keywords, '']
+    });
+  };
+
+  const removeKeyword = (index) => {
+    const newKeywords = settings.target_keywords.filter((_, i) => i !== index);
+    setSettings({ ...settings, target_keywords: newKeywords });
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="animate-spin text-skyblue" size={32} />
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-4xl mx-auto pb-20">
-      
+    <div className="space-y-8 animate-fade-in">
       {/* Header */}
-      <div className="flex justify-between items-end mb-10">
+      <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2">System <span className="text-grey">Configuration</span></h1>
-          <p className="text-grey font-mono text-sm">Manage user preferences and node parameters.</p>
+          <h1 className="text-3xl font-bold text-white mb-2">
+            <SettingsIcon className="inline mr-2 mb-1" size={32} />
+            System <span className="text-skyblue">Settings</span>
+          </h1>
+          <p className="text-grey font-mono text-sm">
+            Configure scan targets and monitoring parameters ({user?.email})
+          </p>
         </div>
         <button 
           onClick={handleSave}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-colors ${
-            saved ? 'bg-green text-white' : 'bg-white text-background hover:bg-skyblue'
-          }`}
+          disabled={saving}
+          className="bg-skyblue text-black px-6 py-3 rounded-lg font-bold hover:bg-white transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {saved ? <><Check size={16} /> SAVED</> : <><Save size={16} /> SAVE CHANGES</>}
+          {saving ? (
+            <RefreshCw size={20} className="animate-spin" />
+          ) : (
+            <Save size={20} />
+          )}
+          {saving ? 'SAVING...' : 'SAVE CHANGES'}
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+      {/* Settings Form */}
+      <div className="glass-panel p-8 rounded-xl border border-white/10 space-y-8">
         
-        {/* Left Column */}
+        {/* Target Domain */}
         <div>
-          <SettingsSection title="Profile Settings" icon={User}>
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-grey to-black border border-white/20 flex items-center justify-center text-2xl">
-                👨‍💻
-              </div>
-              <div>
-                <button className="text-xs text-skyblue hover:text-white underline">Change Avatar</button>
-              </div>
-            </div>
-            <InputField 
-              label="Display Name" 
-              value={settings.displayName}
-              onChange={(val) => setSettings({...settings, displayName: val})}
-            />
-            <InputField 
-              label="Email Address" 
-              value={settings.email}
-              readOnly
-            />
-            <InputField 
-              label="Department" 
-              value={settings.department}
-              onChange={(val) => setSettings({...settings, department: val})}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Interface" icon={Monitor}>
-            <Toggle 
-              label="High Contrast Mode" 
-              checked={settings.highContrast}
-              onChange={(val) => setSettings({...settings, highContrast: val})}
-            />
-            <Toggle 
-              label="Reduced Motion" 
-              checked={settings.reducedMotion}
-              onChange={(val) => setSettings({...settings, reducedMotion: val})}
-            />
-            <div className="mt-4">
-              <label className="text-xs text-grey ml-1 mb-1 block">Theme Accent</label>
-              <div className="flex gap-2">
-                <div className="w-6 h-6 rounded bg-red cursor-pointer ring-2 ring-white/50" />
-                <div className="w-6 h-6 rounded bg-orange cursor-pointer opacity-50 hover:opacity-100" />
-                <div className="w-6 h-6 rounded bg-green cursor-pointer opacity-50 hover:opacity-100" />
-                <div className="w-6 h-6 rounded bg-skyblue cursor-pointer opacity-50 hover:opacity-100" />
-                <div className="w-6 h-6 rounded bg-lavender cursor-pointer opacity-50 hover:opacity-100" />
-              </div>
-            </div>
-          </SettingsSection>
+          <label className="block text-white font-bold mb-2 flex items-center gap-2">
+            <Globe size={20} className="text-skyblue" />
+            Target Domain
+          </label>
+          <p className="text-grey text-sm mb-4 font-mono">
+            Primary domain to monitor for credentials (e.g., ui.ac.id, itb.ac.id)
+          </p>
+          <input
+            type="text"
+            value={settings.target_domain}
+            onChange={(e) => setSettings({ ...settings, target_domain: e.target.value })}
+            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-skyblue focus:outline-none transition-colors font-mono"
+            placeholder="ui.ac.id"
+          />
         </div>
 
-        {/* Right Column */}
+        {/* Target Keywords */}
         <div>
-          <SettingsSection title="Security & API" icon={Shield}>
-            <InputField label="Current Password" type="password" value="********" />
-            <div className="pt-2">
-              <label className="text-xs text-grey ml-1 mb-1 block flex justify-between">
-                <span>API Key (Read Only)</span>
-                <span className="text-orange text-[10px]">EXPIRES IN 3 DAYS</span>
-              </label>
-              <div className="relative">
-                <input 
-                  readOnly 
-                  value="sk_live_9384759283745928734" 
-                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm text-grey font-mono" 
+          <label className="block text-white font-bold mb-2 flex items-center gap-2">
+            <Tag size={20} className="text-orange" />
+            Target Keywords
+          </label>
+          <p className="text-grey text-sm mb-4 font-mono">
+            Keywords to search for in breach sources (min. 2 keywords recommended)
+          </p>
+          
+          <div className="space-y-3">
+            {settings.target_keywords.map((keyword, index) => (
+              <div key={index} className="flex gap-3">
+                <input
+                  type="text"
+                  value={keyword}
+                  onChange={(e) => handleKeywordChange(index, e.target.value)}
+                  className="flex-1 bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-orange focus:outline-none transition-colors font-mono"
+                  placeholder={`Keyword ${index + 1}`}
                 />
-                <button 
-                  onClick={copyApiKey}
-                  className={`absolute right-2 top-2 text-[10px] px-2 rounded transition-colors ${
-                    copied ? 'bg-green text-white' : 'bg-white/10 hover:bg-white/20 text-white'
-                  }`}
-                >
-                  {copied ? <><Check size={10} className="inline" /> COPIED</> : <><Copy size={10} className="inline" /> COPY</>}
-                </button>
+                {settings.target_keywords.length > 1 && (
+                  <button
+                    onClick={() => removeKeyword(index)}
+                    className="bg-red/20 text-red px-4 rounded-lg hover:bg-red/30 transition-colors font-bold"
+                  >
+                    REMOVE
+                  </button>
+                )}
               </div>
-            </div>
-            <div className="mt-4 p-3 bg-red/10 border border-red/20 rounded flex items-start gap-3">
-              <Shield className="text-red shrink-0" size={16} />
-              <div>
-                <h4 className="text-xs font-bold text-red mb-1">DANGER ZONE</h4>
-                <p className="text-[10px] text-grey">Revoking access will disconnect all active crawler nodes immediately.</p>
-              </div>
-            </div>
-          </SettingsSection>
+            ))}
+            
+            <button
+              onClick={addKeyword}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-grey hover:text-white hover:border-white/30 transition-colors font-mono"
+            >
+              + ADD KEYWORD
+            </button>
+          </div>
+        </div>
 
-          <SettingsSection title="Notifications" icon={Bell}>
-            <Toggle 
-              label="Critical Alerts (Push)" 
-              checked={settings.criticalAlerts}
-              onChange={(val) => setSettings({...settings, criticalAlerts: val})}
-            />
-            <Toggle 
-              label="Daily Digest Email" 
-              checked={settings.dailyDigest}
-              onChange={(val) => setSettings({...settings, dailyDigest: val})}
-            />
-            <Toggle 
-              label="System Health Reports" 
-              checked={settings.systemReports}
-              onChange={(val) => setSettings({...settings, systemReports: val})}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Crawler Configuration" icon={Database}>
-            <InputField 
-              label="Max Concurrent Threads" 
-              value={settings.maxThreads}
-              onChange={(val) => setSettings({...settings, maxThreads: parseInt(val) || 12})}
-              type="number"
-            />
-            <div className="mt-2">
-              <label className="text-xs text-grey ml-1 mb-1 block">Scan Interval (Minutes)</label>
-              <input type="range" className="w-full accent-green h-1 bg-white/20 rounded-lg appearance-none cursor-pointer" />
-              <div className="flex justify-between text-[10px] text-grey font-mono mt-1">
-                <span>1m</span>
-                <span>30m</span>
-                <span>60m</span>
-              </div>
-            </div>
-          </SettingsSection>
+        {/* Info Box */}
+        <div className="bg-skyblue/10 border border-skyblue/30 rounded-lg p-4">
+          <p className="text-skyblue text-sm font-mono">
+            <strong>💡 TIP:</strong> Settings apply to Quick Scan feature. Use specific keywords 
+            for better accuracy (e.g., "ui.ac.id" instead of just "ui").
+          </p>
         </div>
 
       </div>
+
+      {/* Multi-University Examples */}
+      <div className="glass-panel p-6 rounded-xl border border-white/10">
+        <h3 className="text-white font-bold mb-4">Multi-University Presets</h3>
+        <div className="grid md:grid-cols-3 gap-4">
+          <button 
+            onClick={() => setSettings({
+              target_domain: 'ui.ac.id',
+              target_keywords: ['ui.ac.id', 'universitas indonesia']
+            })}
+            className="bg-white/5 border border-white/10 rounded-lg p-4 text-left hover:border-skyblue/30 transition-colors"
+          >
+            <div className="text-white font-bold mb-1">Universitas Indonesia</div>
+            <div className="text-grey text-sm font-mono">ui.ac.id</div>
+          </button>
+          <button 
+            onClick={() => setSettings({
+              target_domain: 'itb.ac.id',
+              target_keywords: ['itb.ac.id', 'institut teknologi bandung']
+            })}
+            className="bg-white/5 border border-white/10 rounded-lg p-4 text-left hover:border-skyblue/30 transition-colors"
+          >
+            <div className="text-white font-bold mb-1">ITB</div>
+            <div className="text-grey text-sm font-mono">itb.ac.id</div>
+          </button>
+          <button 
+            onClick={() => setSettings({
+              target_domain: 'ugm.ac.id',
+              target_keywords: ['ugm.ac.id', 'universitas gadjah mada']
+            })}
+            className="bg-white/5 border border-white/10 rounded-lg p-4 text-left hover:border-skyblue/30 transition-colors"
+          >
+            <div className="text-white font-bold mb-1">UGM</div>
+            <div className="text-grey text-sm font-mono">ugm.ac.id</div>
+          </button>
+        </div>
+      </div>
+
     </div>
   );
 };

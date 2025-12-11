@@ -101,6 +101,13 @@ export const api = {
   },
 
   /**
+   * Get specific scan by ID
+   */
+  async getScanById(scanId) {
+    return fetchAPI(`/api/scans/${scanId}`);
+  },
+
+  /**
    * Get results for a specific scan
    */
   async getScanResults(scanId) {
@@ -135,6 +142,32 @@ export const api = {
     
     const queryString = queryParams.toString();
     return fetchAPI(`/api/search${queryString ? '?' + queryString : ''}`);
+  },
+
+  /**
+   * Get user settings (target domain & keywords)
+   */
+  async getSettings() {
+    return fetchAPI('/api/settings');
+  },
+
+  /**
+   * Update user settings
+   */
+  async updateSettings(settings) {
+    return fetchAPI('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  },
+
+  /**
+   * Quick scan - one-click scan with current settings
+   */
+  async quickScan() {
+    return fetchAPI('/api/scan/quick', {
+      method: 'POST',
+    });
   },
 
   /**

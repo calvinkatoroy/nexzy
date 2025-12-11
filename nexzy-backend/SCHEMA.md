@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     email TEXT,
     full_name TEXT,
     organization TEXT,
+    target_domain TEXT NOT NULL DEFAULT 'ui.ac.id',
+    target_keywords JSONB DEFAULT '["ui.ac.id", "universitas indonesia"]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -206,6 +208,7 @@ AND tablename IN ('scans', 'scan_results', 'user_profiles', 'alerts');
 ## Schema Overview
 
 ### `scans` Table
+
 Stores scan job metadata and status.
 
 | Column | Type | Description |
@@ -223,6 +226,7 @@ Stores scan job metadata and status.
 | updated_at | TIMESTAMPTZ | Last update time |
 
 ### `scan_results` Table
+
 Stores individual discovered items from scans.
 
 | Column | Type | Description |
@@ -240,6 +244,7 @@ Stores individual discovered items from scans.
 | found_at | TIMESTAMPTZ | When item was discovered |
 
 ### `user_profiles` Table (Optional)
+
 Extended user information.
 
 | Column | Type | Description |
@@ -252,6 +257,7 @@ Extended user information.
 | updated_at | TIMESTAMPTZ | Last update time |
 
 ### `alerts` Table (Optional)
+
 High-priority notifications for critical findings.
 
 | Column | Type | Description |

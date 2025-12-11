@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, ShieldCheck, Key, Activity, Plus } from 'lucide-react';
+import { AlertCircle, ShieldCheck, Key, Activity, Plus, Zap } from 'lucide-react';
 import StatsCard from '../components/dashboard/StatsCard';
 import TrendGraph from '../components/dashboard/TrendGraph';
 import RecentAlerts from '../components/dashboard/RecentAlerts';
 import ScanModal from '../components/ScanModal';
 import ScanNotification from '../components/ScanNotification';
+import ScanLogsModal from '../components/ScanLogsModal';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -21,6 +22,7 @@ const Dashboard = () => {
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
   const [activeScan, setActiveScan] = useState(null);
   const [ws, setWs] = useState(null);
+  const [logsModal, setLogsModal] = useState({ isOpen: false, scan: null, logs: null });
 
   useEffect(() => {
     console.log('[DASHBOARD] useEffect triggered, user:', user?.email || 'null');
@@ -103,13 +105,43 @@ const Dashboard = () => {
     });
   };
 
+  const handleViewLogs = async (scan) => {
+    try {
+      // Fetch scan details with logs from backend
+      const scanDetails = await api.getScanById(scan.scan_id);
+      setLogsModal({
+        isOpen: true,
+        scan: scanDetails,
+        logs: scanDetails.logs || []
+      });
+    } catch (error) {
+      console.error('Failed to fetch scan logs:', error);
+      // Show modal anyway with available data
+      setLogsModal({
+        isOpen: true,
+        scan: scan,
+        logs: []
+      });
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Scan Notification */}
       <ScanNotification 
         scan={activeScan} 
         onClose={() => setActiveScan(null)}
+        onViewLogs={handleViewLogs}
       />
+
+      {/* Scan Logs Modal */}
+      {logsModal.isOpen && (
+        <ScanLogsModal
+          scan={logsModal.scan}
+          logs={logsModal.logs}
+          onClose={() => setLogsModal({ isOpen: false, scan: null, logs: null })}
+        />
+      )}
       {/* 1. Header with Typing Effect (Optional CSS animation) */}
       <div className="flex justify-between items-end">
         <div>
@@ -120,13 +152,29 @@ const Dashboard = () => {
             {loading ? 'Loading...' : error ? 'Error loading data' : `Monitoring active threat vectors... (${user?.email})`}
           </p>
         </div>
-        <button 
-          onClick={() => setIsScanModalOpen(true)}
-          className="bg-skyblue text-black px-6 py-3 rounded-lg font-bold hover:bg-white transition-colors flex items-center gap-2 group"
-        >
-          <Plus size={20} className="group-hover:rotate-90 transition-transform" />
-          NEW SCAN
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={async () => {
+              try {
+                const result = await api.quickScan();
+                handleScanCreated(result);
+              } catch (error) {
+                console.error('Quick scan failed:', error);
+              }
+            }}
+            className="bg-red text-white px-6 py-3 rounded-lg font-bold hover:bg-red/80 transition-colors flex items-center gap-2 group"
+          >
+            <Zap size={20} className="group-hover:scale-110 transition-transform" />
+            QUICK SCAN
+          </button>
+          <button 
+            onClick={() => setIsScanModalOpen(true)}
+            className="bg-skyblue text-black px-6 py-3 rounded-lg font-bold hover:bg-white transition-colors flex items-center gap-2 group"
+          >
+            <Plus size={20} className="group-hover:rotate-90 transition-transform" />
+            NEW SCAN
+          </button>
+        </div>
       </div>
 
       {/* Scan Modal */}

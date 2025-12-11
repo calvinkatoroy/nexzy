@@ -197,8 +197,24 @@ const AlertDetails = () => {
         <div className="glass-panel p-6 rounded-xl space-y-4">
           <div>
             <h4 className="text-sm font-bold text-white mb-2">Description</h4>
-            <p className="text-grey leading-relaxed">{alert.description}</p>
+            <div className="text-grey leading-relaxed whitespace-pre-wrap">
+              {alert.description.split('🛡️ MITIGATION RECOMMENDATIONS:')[0]}
+            </div>
           </div>
+          
+          {alert.description.includes('🛡️ MITIGATION RECOMMENDATIONS:') && (
+            <div className="pt-4 border-t border-white/10">
+              <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                <ShieldAlert size={18} className="text-green" />
+                Mitigation Recommendations
+              </h4>
+              <div className="bg-green/5 border border-green/20 rounded-lg p-4">
+                <div className="text-grey leading-relaxed whitespace-pre-wrap">
+                  {alert.description.split('🛡️ MITIGATION RECOMMENDATIONS:')[1]?.split('Source URL:')[0]?.trim()}
+                </div>
+              </div>
+            </div>
+          )}
           
           {sourceUrl !== 'Unknown' && (
             <div className="pt-4 border-t border-white/10">

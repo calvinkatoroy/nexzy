@@ -113,151 +113,39 @@ const Landing = () => {
 
       </section>
 
-      {/* About/Info Section */}
-      <section id="about-section" className="relative z-10 min-h-screen bg-gradient-to-b from-background to-black/50 border-t border-white/10">
+      {/* About Section (Simplified) */}
+      <section id="about-section" className="relative z-10 min-h-screen bg-gradient-to-b from-background to-black/50 border-t border-white/10 flex items-center justify-center">
         
-        <div className="max-w-7xl mx-auto px-8 py-20">
+        <div className="max-w-4xl mx-auto px-8 py-20 text-center">
           
-          {/* Section Header */}
-          <div className="text-center mb-20">
-            <p className="text-red font-mono text-sm mb-4 tracking-widest">ABOUT THE PROJECT</p>
-            <h2 className="text-5xl md:text-7xl font-bold text-white mb-6">
-              Proactive Threat <br/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-red via-orange to-red">Intelligence</span>
-            </h2>
-            <p className="text-grey text-lg max-w-2xl mx-auto font-mono">
-              Nexzy monitors unstructured data sources in real-time to detect potential security breaches before they escalate.
-            </p>
-          </div>
+          <h2 className="text-5xl md:text-7xl font-bold text-white mb-8">
+            Built for <span className="text-transparent bg-clip-text bg-gradient-to-r from-red via-orange to-red">Security</span>
+          </h2>
+          
+          <p className="text-grey text-lg md:text-xl max-w-2xl mx-auto font-mono mb-12 leading-relaxed">
+            Advanced OSINT platform for automated threat detection. 
+            Real-time monitoring, intelligent analysis, actionable insights.
+          </p>
 
-          {/* Key Features Grid */}
-          <div className="grid md:grid-cols-3 gap-8 mb-20">
-            
-            {/* Feature 1 */}
-            <div className="glass-panel p-8 rounded-xl border border-white/10 hover:border-red/30 transition-all group">
-              <div className="w-12 h-12 bg-red/10 rounded-lg flex items-center justify-center mb-4 group-hover:bg-red/20 transition-colors">
-                <Zap className="text-red" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-3">Real-Time Monitoring</h3>
-              <p className="text-grey text-sm leading-relaxed">
-                Automated scraping of paste sites like Pastebin with keyword-based targeting for instant breach detection.
-              </p>
+          {/* Key Features - Minimal */}
+          <div className="grid md:grid-cols-3 gap-8 mb-16">
+            <div className="glass-panel p-6 rounded-xl border border-white/10 hover:border-red/30 transition-all">
+              <Zap className="text-red mx-auto mb-3" size={32} />
+              <h3 className="text-lg font-bold text-white">Real-Time</h3>
             </div>
-
-            {/* Feature 2 */}
-            <div className="glass-panel p-8 rounded-xl border border-white/10 hover:border-orange/30 transition-all group">
-              <div className="w-12 h-12 bg-orange/10 rounded-lg flex items-center justify-center mb-4 group-hover:bg-orange/20 transition-colors">
-                <Target className="text-orange" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-3">Smart Analysis</h3>
-              <p className="text-grey text-sm leading-relaxed">
-                AI-powered risk scoring and automatic summarization to prioritize critical threats and reduce noise.
-              </p>
+            <div className="glass-panel p-6 rounded-xl border border-white/10 hover:border-orange/30 transition-all">
+              <Target className="text-orange mx-auto mb-3" size={32} />
+              <h3 className="text-lg font-bold text-white">AI-Powered</h3>
             </div>
-
-            {/* Feature 3 */}
-            <div className="glass-panel p-8 rounded-xl border border-white/10 hover:border-skyblue/30 transition-all group">
-              <div className="w-12 h-12 bg-skyblue/10 rounded-lg flex items-center justify-center mb-4 group-hover:bg-skyblue/20 transition-colors">
-                <Shield className="text-skyblue" size={24} />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-3">Actionable Alerts</h3>
-              <p className="text-grey text-sm leading-relaxed">
-                Structured dashboard with filtering, search, and export capabilities for rapid incident response.
-              </p>
-            </div>
-
-          </div>
-
-          {/* Architecture Section */}
-          <div className="glass-panel p-12 rounded-xl border border-white/10 mb-20">
-            <h3 className="text-3xl font-bold text-white mb-8 text-center">System Architecture</h3>
-            
-            <div className="flex flex-col md:flex-row items-center justify-between gap-8">
-              
-              {/* Frontend */}
-              <div className="flex-1 text-center">
-                <div className="w-16 h-16 bg-skyblue/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Code className="text-skyblue" size={32} />
-                </div>
-                <h4 className="text-xl font-bold text-white mb-2">Frontend</h4>
-                <p className="text-grey text-sm mb-3">React + Vite</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">React Router</span>
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">Tailwind CSS</span>
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">Anime.js</span>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <div className="text-grey">
-                <ArrowRight size={32} className="hidden md:block" />
-                <ChevronDown size={32} className="md:hidden" />
-              </div>
-
-              {/* Backend */}
-              <div className="flex-1 text-center">
-                <div className="w-16 h-16 bg-red/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Terminal className="text-red" size={32} />
-                </div>
-                <h4 className="text-xl font-bold text-white mb-2">Backend</h4>
-                <p className="text-grey text-sm mb-3">Python + FastAPI</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">BeautifulSoup</span>
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">WebSockets</span>
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">Uvicorn</span>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <div className="text-grey">
-                <ArrowRight size={32} className="hidden md:block" />
-                <ChevronDown size={32} className="md:hidden" />
-              </div>
-
-              {/* Database */}
-              <div className="flex-1 text-center">
-                <div className="w-16 h-16 bg-green/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Database className="text-green" size={32} />
-                </div>
-                <h4 className="text-xl font-bold text-white mb-2">Database</h4>
-                <p className="text-grey text-sm mb-3">Supabase</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">PostgreSQL</span>
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">Auth</span>
-                  <span className="px-3 py-1 bg-white/5 rounded text-xs text-grey border border-white/10">Real-time</span>
-                </div>
-              </div>
-
+            <div className="glass-panel p-6 rounded-xl border border-white/10 hover:border-skyblue/30 transition-all">
+              <Shield className="text-skyblue mx-auto mb-3" size={32} />
+              <h3 className="text-lg font-bold text-white">Automated</h3>
             </div>
           </div>
 
-          {/* Stats/Highlights */}
-          <div className="grid md:grid-cols-4 gap-6 mb-20">
-            <div className="text-center">
-              <div className="text-4xl font-bold text-red mb-2">100%</div>
-              <div className="text-grey text-sm font-mono">Automated</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-orange mb-2">&lt;3s</div>
-              <div className="text-grey text-sm font-mono">Detection Time</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-skyblue mb-2">24/7</div>
-              <div className="text-grey text-sm font-mono">Monitoring</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-green mb-2">∞</div>
-              <div className="text-grey text-sm font-mono">Sources</div>
-            </div>
-          </div>
-
-          {/* Team/Project Info */}
-          <div className="glass-panel p-12 rounded-xl border border-white/10 text-center">
-            <h3 className="text-2xl font-bold text-white mb-4">Built by Group 4</h3>
-            <p className="text-grey mb-8 max-w-2xl mx-auto">
-              Nexzy is an academic research project focused on proactive cybersecurity threat detection, 
-              developed as part of advanced security coursework at Universitas Indonesia.
-            </p>
+          {/* CTA */}
+          <div className="glass-panel p-8 rounded-xl border border-white/10">
+            <p className="text-grey text-sm mb-4 font-mono">GROUP 4 // UNIVERSITAS INDONESIA</p>
             <a 
               href="https://github.com/calvinkatoroy/nexzy" 
               target="_blank" 
@@ -265,7 +153,7 @@ const Landing = () => {
               className="inline-flex items-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white transition-all"
             >
               <Github size={20} />
-              View on GitHub
+              View Source Code
             </a>
           </div>
 

@@ -9,6 +9,8 @@ const ScanModal = ({ isOpen, onClose, onScanCreated }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [currentScanId, setCurrentScanId] = useState(null);
+  const [crawlAuthors, setCrawlAuthors] = useState(true);
+  const [enableDarknet, setEnableDarknet] = useState(false);
   const toast = useToast();
 
   // WebSocket for real-time scan updates
@@ -67,8 +69,8 @@ const ScanModal = ({ isOpen, onClose, onScanCreated }) => {
     try {
       const result = await api.createScan(validUrls, {
         enable_clearnet: true,
-        enable_darknet: false,
-        crawl_authors: true
+        enable_darknet: enableDarknet,
+        crawl_authors: crawlAuthors
       });
 
       console.log('✅ Scan created:', result);
@@ -172,7 +174,8 @@ const ScanModal = ({ isOpen, onClose, onScanCreated }) => {
             <label className="flex items-center gap-3 cursor-pointer group">
               <input 
                 type="checkbox" 
-                defaultChecked 
+                checked={crawlAuthors}
+                onChange={(e) => setCrawlAuthors(e.target.checked)}
                 className="w-4 h-4 accent-skyblue"
               />
               <span className="text-white text-sm group-hover:text-skyblue transition-colors">
@@ -183,11 +186,29 @@ const ScanModal = ({ isOpen, onClose, onScanCreated }) => {
             <label className="flex items-center gap-3 cursor-pointer group">
               <input 
                 type="checkbox" 
+                checked={enableDarknet}
+                onChange={(e) => setEnableDarknet(e.target.checked)}
+                className="w-4 h-4 accent-orange"
+              />
+              <div className="flex-1">
+                <span className="text-white text-sm group-hover:text-orange transition-colors">
+                  Enable Darkweb Search 🌐
+                </span>
+                <p className="text-xs text-grey mt-1">
+                  Search darkweb paste sites (Stronghold, DarkPaste, etc.) - Slower but finds unlisted pastes
+                </p>
+              </div>
+            </label>
+            
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input 
+                type="checkbox" 
                 defaultChecked 
+                disabled
                 className="w-4 h-4 accent-green"
               />
-              <span className="text-white text-sm group-hover:text-green transition-colors">
-                Extract credentials and emails
+              <span className="text-grey text-sm">
+                Extract credentials and emails (Always enabled)
               </span>
             </label>
           </div>
