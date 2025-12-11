@@ -400,7 +400,9 @@ class DiscoveryOrchestrator:
             'emails': list(all_emails),
             'target_emails': list(target_emails),
             'has_credentials': has_credentials,
-            'discovered_at': datetime.utcnow().isoformat()
+            'discovered_at': datetime.utcnow().isoformat(),
+            # Provide content preview for AI module input
+            'content_preview': content[:2000]
         }
         
         logger.info(

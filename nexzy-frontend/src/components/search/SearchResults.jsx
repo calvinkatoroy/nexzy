@@ -6,6 +6,7 @@ import { api } from '../../lib/api';
 
 const SearchResults = ({ searchQuery }) => {
   const [results, setResults] = useState([]);
+  const [alertsById, setAlertsById] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -17,6 +18,24 @@ const SearchResults = ({ searchQuery }) => {
       loadAllResults();
     }
   }, [searchQuery]);
+
+  // Load alerts once to enrich results with AI info (summary, score, signals)
+  useEffect(() => {
+    const loadAlerts = async () => {
+      try {
+        const alerts = await api.getAlerts();
+        const map = {};
+        for (const a of alerts || []) {
+          map[a.id] = parseAlertAIFields(a);
+        }
+        setAlertsById(map);
+      } catch (e) {
+        // Non-fatal; results still render without AI enrichment
+        console.warn('Failed to load alerts for AI enrichment:', e);
+      }
+    };
+    loadAlerts();
+  }, []);
 
   const loadResults = async () => {
     setLoading(true);
@@ -42,6 +61,34 @@ const SearchResults = ({ searchQuery }) => {
       setError(err.message);
       setLoading(false);
     }
+  };
+
+  // Parse AI fields out of alert object (title/description text)
+  const parseAlertAIFields = (alert) => {
+    const ai = { aiScore: null, aiSummary: null, aiRationale: null, aiSignals: [] };
+    const desc = alert?.description || '';
+
+    // Vulnerability Score: 78.5/100
+    const scoreMatch = desc.match(/Vulnerability\s+Score:\s+(\d+(?:\.\d+)?)\s*\/\s*100/i);
+    if (scoreMatch) ai.aiScore = parseFloat(scoreMatch[1]);
+
+    // AI Summary:
+    const summaryMatch = desc.match(/AI\s+Summary:\s*([\s\S]*?)(?:\n\n|$)/i);
+    if (summaryMatch) ai.aiSummary = summaryMatch[1].trim();
+
+    // Risk Assessment:
+    const rationaleMatch = desc.match(/Risk\s+Assessment:\s*([\s\S]*?)(?:\n\n|$)/i);
+    if (rationaleMatch) ai.aiRationale = rationaleMatch[1].trim();
+
+    // Detected Signals: signal1, signal2
+    const signalsMatch = desc.match(/Detected\s+Signals:\s*([^\n]+)/i);
+    if (signalsMatch) {
+      ai.aiSignals = signalsMatch[1]
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+    }
+    return ai;
   };
 
   const loadAllResults = async () => {
@@ -177,6 +224,8 @@ const SearchResults = ({ searchQuery }) => {
               <th className="px-6 py-4 font-normal">Source</th>
               <th className="px-6 py-4 font-normal">Type</th>
               <th className="px-6 py-4 font-normal">Score</th>
+              <th className="px-6 py-4 font-normal">AI Score</th>
+              <th className="px-6 py-4 font-normal">AI Summary</th>
               <th className="px-6 py-4 font-normal">Target Emails</th>
               <th className="px-6 py-4 font-normal text-right">Action</th>
             </tr>
@@ -190,7 +239,9 @@ const SearchResults = ({ searchQuery }) => {
               </tr>
             ) : (
               results.map((res, i) => {
-                const severity = getSeverityFromScore(res.relevance_score);
+                const ai = res.alert_id ? alertsById[res.alert_id] : null;
+                const primaryScore = ai?.aiScore != null ? (ai.aiScore / 100) : res.relevance_score;
+                const severity = getSeverityFromScore(primaryScore);
                 const type = getTypeFromData(res);
                 
                 return (
@@ -210,11 +261,26 @@ const SearchResults = ({ searchQuery }) => {
                     <td className={`px-6 py-4 ${getTypeColor(type)}`}>{type}</td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded text-[10px] border font-bold uppercase ${getSeverityColor(severity)}`}>
-                        {(res.relevance_score * 100).toFixed(0)}%
+                        {(primaryScore * 100).toFixed(0)}%
                       </span>
                     </td>
                     <td className="px-6 py-4 text-white">
                       {res.target_emails?.length || 0}
+                    </td>
+                    {/* AI columns */}
+                    <td className="px-6 py-4">
+                      {ai?.aiScore != null ? (
+                        <span className="px-2 py-1 rounded text-[10px] border font-bold uppercase text-orange border-orange/30 bg-orange/10">
+                          {ai.aiScore.toFixed(1)}
+                        </span>
+                      ) : (
+                        <span className="text-grey/50">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 max-w-[260px]">
+                      <span className="text-grey truncate inline-block max-w-[240px]" title={ai?.aiSummary || ''}>
+                        {ai?.aiSummary || '—'}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-right">
                       {res.alert_id ? (

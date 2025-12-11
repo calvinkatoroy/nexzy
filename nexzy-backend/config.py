@@ -67,7 +67,7 @@ CLEARNET_SOURCES = [
 
 # API server settings
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
-API_PORT = int(os.getenv("API_PORT", "8000"))
+API_PORT = int(os.getenv("API_PORT", "8001"))
 
 # CORS settings
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")

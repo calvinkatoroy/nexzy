@@ -69,12 +69,12 @@ Write-Host "================================" -ForegroundColor Cyan
 Write-Host "  STARTING NEXZY BACKEND SERVER" -ForegroundColor Cyan
 Write-Host "================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Server will start at: http://localhost:8000" -ForegroundColor Green
-Write-Host "API Docs: http://localhost:8000/docs" -ForegroundColor Green
-Write-Host "Health Check: http://localhost:8000/health" -ForegroundColor Green
+Write-Host "Server will start at: http://localhost:8001" -ForegroundColor Green
+Write-Host "API Docs: http://localhost:8001/docs" -ForegroundColor Green
+Write-Host "Health Check: http://localhost:8001/health" -ForegroundColor Green
 Write-Host ""
 Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Yellow
 Write-Host ""
 
 # Run uvicorn
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
