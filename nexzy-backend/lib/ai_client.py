@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 async def analyze_batch(
     items: List[Dict[str, str]],
-    score_threshold: float = 40.0,
-    max_parallel_gemini: int = 16
+    score_threshold: float = 95.0,  # Only items scoring 95+ get Gemini summaries (top 5%)
+    max_parallel_gemini: int = 1     # Max 1 call at a time (super conservative)
 ) -> List[Dict]:
     """
     Send batch of texts to AI service for scoring and summarization.

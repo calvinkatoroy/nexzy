@@ -154,18 +154,28 @@ const TrendGraph = () => {
                   strokeWidth="3" 
                   strokeLinecap="round"
                 />
-                {credPath.points.map((point, i) => (
-                  <circle 
-                    key={`cred-${i}`} 
-                    cx={point.x} 
-                    cy={point.y} 
-                    r="4" 
-                    fill="#252423" 
-                    stroke="#FF4B4B" 
-                    strokeWidth="2" 
-                    className="trend-dot" 
-                  />
-                ))}
+                {credPath.points.map((point, i) => {
+                  const dataPoint = graphData[i];
+                  const dateStr = dataPoint?.date ? 
+                    new Date(dataPoint.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 
+                    'N/A';
+                  return (
+                    <g key={`cred-${i}`}>
+                      <circle 
+                        cx={point.x} 
+                        cy={point.y} 
+                        r="4" 
+                        fill="#252423" 
+                        stroke="#FF4B4B" 
+                        strokeWidth="2" 
+                        className="trend-dot cursor-pointer hover:r-6 transition-all" 
+                      />
+                      <title>
+                        {`${dateStr}\nCredentials Found: ${dataPoint?.credentialCount || 0}\nAlerts Triggered: ${dataPoint?.alertCount || 0}`}
+                      </title>
+                    </g>
+                  );
+                })}
               </>
             )}
 

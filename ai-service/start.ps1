@@ -37,5 +37,21 @@ if (-not $apiKey -or $apiKey -eq "your_gemini_api_key_here" -or $apiKey -eq "") 
     Write-Host ""
 }
 
-Write-Host "Starting AI Service on port 8001..." -ForegroundColor Green
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8001
+Write-Host "Starting AI Service on port 8000..." -ForegroundColor Green
+Write-Host "Using global Python with torch/transformers..." -ForegroundColor Yellow
+
+# Deactivate any active venv first
+if ($env:VIRTUAL_ENV) {
+    Write-Host "Deactivating venv: $env:VIRTUAL_ENV" -ForegroundColor Yellow
+    deactivate 2>$null
+}
+
+# Use py launcher to get global Python (bypasses PATH and venvs)
+$pythonPath = "C:\Users\calvi\AppData\Local\Programs\Python\Python314\python.exe"
+if (Test-Path $pythonPath) {
+    Write-Host "Python: $pythonPath" -ForegroundColor Gray
+    & $pythonPath main.py
+} else {
+    Write-Host "Fallback to py launcher..." -ForegroundColor Gray
+    py -3 main.py
+}

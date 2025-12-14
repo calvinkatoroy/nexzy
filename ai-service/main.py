@@ -1,24 +1,67 @@
 """
-AI Scoring and Summarizing Service for Nexzy
-Uses Google Gemini API for vulnerability analysis and mitigation recommendations
+Nexzy AI Service - Enhanced with RoBERTa + Gemini
+Architecture:
+1. RoBERTa model scores vulnerability (no API limits, fast)
+2. Gemini generates summaries only for high-risk items (saves quota)
+
+Based on: https://github.com/sleepingpolice-afk/nexzyAI
+Integrated into Nexzy by: GitHub Copilot
 """
 
 import os
-from fastapi import FastAPI, HTTPException
+import asyncio
+import torch
+import torch.nn.functional as F
+from typing import List, Optional, Dict
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
-import google.generativeai as genai
-import asyncio
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from dotenv import load_dotenv
 import logging
-from datetime import datetime
+
+# Load environment variables
+load_dotenv()
+
+# Import custom modules
+from pii_masker import mask_text, detect_signals
+from gemini_client import generate_summary_and_mitigation
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI
-app = FastAPI(title="Nexzy AI Scoring Service", version="1.0.0")
+# ============================================================================
+# MODEL CONFIGURATION
+# ============================================================================
+
+# Use friend's fine-tuned RoBERTa model from Hugging Face
+MODEL_NAME = "Harafu/roberta-risk-next"
+ALERT_HIGH = 80
+ALERT_MED = 50
+
+# Load model and tokenizer
+logger.info(f"Loading RoBERTa model: {MODEL_NAME}")
+try:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+    model.eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    logger.info(f"✅ RoBERTa model loaded successfully on {device}")
+except Exception as e:
+    logger.error(f"Failed to load RoBERTa model: {e}")
+    raise
+
+# ============================================================================
+# FASTAPI APP
+# ============================================================================
+
+app = FastAPI(
+    title="Nexzy AI Service - RoBERTa + Gemini",
+    version="2.0.0",
+    description="Enhanced vulnerability scoring with local ML model + Gemini summaries"
+)
 
 # CORS
 app.add_middleware(
@@ -29,216 +72,263 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash-exp')
-    logger.info("✅ Gemini API configured successfully")
-else:
-    logger.warning("⚠️ GEMINI_API_KEY not set - service will return mock data")
+# ============================================================================
+# SCHEMAS
+# ============================================================================
 
-# Models
-class TextItem(BaseModel):
+class ItemIn(BaseModel):
     text: str
     url: Optional[str] = None
     timestamp: Optional[str] = None
 
-class AnalyzeRequest(BaseModel):
-    items: List[Dict]
-    score_threshold: float = Field(default=40.0, ge=0, le=100)
-    max_parallel_gemini: int = Field(default=16, ge=1, le=50)
-    max_summary_chars: int = Field(default=1200, ge=100, le=5000)
+class BatchIn(BaseModel):
+    items: List[ItemIn]
+    score_threshold: float = Field(95, ge=0, le=100, description="Min score for Gemini summary")
+    max_parallel_gemini: int = Field(1, ge=1, le=20, description="Max concurrent Gemini calls")
+    max_summary_chars: int = Field(1200, ge=100, le=5000, description="Max chars for masking")
 
-class AnalysisResult(BaseModel):
+class ItemOut(BaseModel):
     index: int
     vulnerability_score: float
     summary: str
     rationale: str
     alerts: str
-    signals: List[str]
-    mitigation: str  # NEW: Mitigation recommendations
+    signals: List[str] = []
+    mitigation: str
 
-# Gemini Analysis
-async def analyze_with_gemini(text: str, url: Optional[str], index: int) -> Dict:
-    """Analyze text using Gemini API with scoring and mitigation recommendations"""
+class BatchOut(BaseModel):
+    results: List[ItemOut]
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def alert_level(score: float) -> str:
+    """Convert score to alert level"""
+    if score >= ALERT_HIGH:
+        return "CRITICAL"
+    elif score >= ALERT_MED:
+        return "HIGH"
+    elif score >= 30:
+        return "MEDIUM"
+    else:
+        return "LOW"
+
+def batch_score_texts(texts: List[str]) -> List[float]:
+    """
+    Score texts using RoBERTa model (local, no API calls).
     
-    if not GEMINI_API_KEY:
-        # Mock response for testing
-        return {
-            "index": index,
-            "vulnerability_score": 65.0,
-            "summary": "Mock Analysis - GEMINI_API_KEY not configured",
-            "rationale": "This is a mock response. Configure GEMINI_API_KEY to enable real AI analysis.",
-            "alerts": "MEDIUM",
-            "signals": ["credentials", "emails", "passwords"],
-            "mitigation": "Mock mitigation - Set GEMINI_API_KEY environment variable for real recommendations."
-        }
+    Returns:
+        List of vulnerability scores (0-100)
+    """
+    scores = []
     
-    try:
-        prompt = f"""You are a cybersecurity expert analyzing data leaks. Analyze this paste/content:
+    for text in texts:
+        try:
+            # Tokenize
+            inputs = tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+                padding=True
+            ).to(device)
+            
+            # Get model output
+            with torch.no_grad():
+                outputs = model(**inputs)
+                logits = outputs.logits
+                
+                # Handle both classifier (2 outputs) and regression (1 output)
+                if logits.shape[-1] == 2:
+                    # Classification model: use probability of positive class
+                    probs = F.softmax(logits, dim=-1)
+                    score = probs[0][1].item() * 100.0
+                else:
+                    # Regression model: clamp to 0-1 range and scale to 0-100
+                    score = torch.clamp(logits, 0.0, 1.0).item() * 100.0
+                
+                scores.append(score)
+                
+        except Exception as e:
+            logger.error(f"Scoring error: {e}")
+            scores.append(0.0)
+    
+    return scores
 
-URL: {url or 'Unknown'}
-Content:
-{text[:3000]}  # Limit to first 3000 chars
-
-Provide a structured analysis:
-
-1. VULNERABILITY SCORE (0-100):
-   - 0-20: Low risk (no sensitive data)
-   - 21-40: Low-Medium (minor info)
-   - 41-60: Medium (some credentials)
-   - 61-80: High (clear credentials/PII)
-   - 81-100: Critical (active credentials, database dumps, mass exposure)
-
-2. SUMMARY (1-2 sentences): What was leaked?
-
-3. RATIONALE: Why this score? What makes it dangerous?
-
-4. ALERT LEVEL: LOW, MEDIUM, HIGH, or CRITICAL
-
-5. SIGNALS (list): detected patterns like: passwords, api_keys, database_credentials, admin_access, pii, credit_cards, ssh_keys, tokens, emails, phone_numbers
-
-6. MITIGATION RECOMMENDATIONS (detailed):
-   - Immediate actions (0-24 hours)
-   - Short-term fixes (1-7 days)
-   - Long-term prevention
-   - Specific technical steps
-   - Who should be notified
-
-Format your response EXACTLY like this:
-SCORE: [number]
-SUMMARY: [text]
-RATIONALE: [text]
-ALERT: [level]
-SIGNALS: [comma,separated,list]
-MITIGATION: [detailed recommendations with bullet points]"""
-
-        response = await asyncio.to_thread(
-            model.generate_content,
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.3,
-                max_output_tokens=2000,
-            )
-        )
-        
-        result_text = response.text
-        
-        # Parse response
-        score = 0.0
-        summary = "Analysis completed"
-        rationale = ""
-        alert = "LOW"
-        signals = []
-        mitigation = ""
-        
-        for line in result_text.split('\n'):
-            line = line.strip()
-            if line.startswith('SCORE:'):
-                try:
-                    score = float(line.split(':', 1)[1].strip())
-                except:
-                    score = 50.0
-            elif line.startswith('SUMMARY:'):
-                summary = line.split(':', 1)[1].strip()
-            elif line.startswith('RATIONALE:'):
-                rationale = line.split(':', 1)[1].strip()
-            elif line.startswith('ALERT:'):
-                alert = line.split(':', 1)[1].strip().upper()
-            elif line.startswith('SIGNALS:'):
-                signals_str = line.split(':', 1)[1].strip()
-                signals = [s.strip() for s in signals_str.split(',') if s.strip()]
-            elif line.startswith('MITIGATION:'):
-                mitigation = line.split(':', 1)[1].strip()
-                # Capture multi-line mitigation
-                mitigation_lines = [mitigation]
-                remaining = result_text.split('MITIGATION:', 1)[1].strip()
-                if remaining:
-                    mitigation = remaining
-        
-        return {
-            "index": index,
-            "vulnerability_score": min(100.0, max(0.0, score)),
-            "summary": summary[:500],
-            "rationale": rationale[:800],
-            "alerts": alert if alert in ["LOW", "MEDIUM", "HIGH", "CRITICAL"] else "MEDIUM",
-            "signals": signals,
-            "mitigation": mitigation[:2000]  # Limit but allow longer text
-        }
-        
-    except Exception as e:
-        logger.error(f"Gemini analysis error for item {index}: {e}")
-        return {
-            "index": index,
-            "vulnerability_score": 0.0,
-            "summary": "Analysis failed",
-            "rationale": f"Error during AI analysis: {str(e)[:200]}",
-            "alerts": "LOW",
-            "signals": [],
-            "mitigation": "Unable to generate mitigation recommendations due to analysis failure."
-        }
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
+    """Service info"""
     return {
-        "service": "Nexzy AI Scoring Service",
-        "status": "online",
-        "gemini_configured": bool(GEMINI_API_KEY),
-        "timestamp": datetime.utcnow().isoformat()
+        "service": "Nexzy AI - RoBERTa + Gemini",
+        "version": "2.0.0",
+        "model": MODEL_NAME,
+        "device": device,
+        "endpoints": {
+            "health": "/health",
+            "analyze": "/analyze_batch",
+            "docs": "/docs"
+        }
     }
 
 @app.get("/health")
 async def health():
-    """Detailed health check"""
+    """Health check"""
     return {
         "status": "healthy",
-        "gemini_api": "configured" if GEMINI_API_KEY else "not_configured",
-        "model": "gemini-2.0-flash-exp",
-        "timestamp": datetime.utcnow().isoformat()
+        "model": MODEL_NAME,
+        "device": device,
+        "gemini_configured": bool(os.getenv("GEMINI_API_KEY"))
     }
 
-@app.post("/analyze_batch", response_model=Dict)
-async def analyze_batch(request: AnalyzeRequest):
+@app.post("/analyze_batch", response_model=BatchOut)
+async def analyze_batch(payload: BatchIn):
     """
-    Analyze multiple text items in parallel
-    Returns vulnerability scores, summaries, and mitigation recommendations
+    Analyze batch of texts for security vulnerabilities.
+    
+    Process:
+    1. Extract text from items
+    2. Score with RoBERTa (all items, fast, local)
+    3. Detect PII signals and mask text
+    4. Apply signal-based boosting/reduction
+    5. Generate Gemini summaries for high-scoring items only
+    6. Return complete analysis
     """
-    logger.info(f"📥 Received batch analysis request: {len(request.items)} items")
+    logger.info(f"📥 Received batch: {len(payload.items)} items, threshold: {payload.score_threshold}")
     
-    if not request.items:
-        return {"results": []}
+    if not payload.items:
+        return BatchOut(results=[])
     
-    # Limit concurrent Gemini calls
-    semaphore = asyncio.Semaphore(request.max_parallel_gemini)
+    # Step 1: Extract texts
+    texts = [item.text for item in payload.items]
     
-    async def analyze_with_limit(item_dict: Dict, idx: int):
-        async with semaphore:
-            return await analyze_with_gemini(
-                text=item_dict.get("text", ""),
-                url=item_dict.get("url"),
-                index=idx
-            )
+    # Step 2: Score all texts with RoBERTa (local, fast)
+    logger.info("🤖 Scoring with RoBERTa model...")
+    raw_scores = batch_score_texts(texts)
     
-    # Run analyses in parallel
-    tasks = [
-        analyze_with_limit(item, i)
-        for i, item in enumerate(request.items)
+    # Step 3: Detect signals and mask PII
+    logger.info("🔍 Detecting signals and masking PII...")
+    masked_list = []
+    signals_list = []
+    final_scores = []
+    
+    for i, item in enumerate(payload.items):
+        # Detect security signals
+        signals = detect_signals(item.text)
+        
+        # Mask PII for Gemini
+        masked = mask_text(item.text)[:payload.max_summary_chars]
+        
+        masked_list.append(masked)
+        signals_list.append(signals)
+        
+        # Step 4: Apply signal-based score adjustment
+        base_score = raw_scores[i]
+        
+        if len(signals) > 0:
+            # Signals detected: boost score
+            # Formula: 85 + (base * 0.1) caps at 99.9
+            boosted = 85.0 + (base_score * 0.1)
+            final_score = min(boosted, 99.9)
+            logger.debug(f"Item {i}: Signals {signals} → boosted {base_score:.1f} → {final_score:.1f}")
+        else:
+            # No signals: reduce score
+            # Formula: base * 0.5
+            final_score = base_score * 0.5
+            logger.debug(f"Item {i}: No signals → reduced {base_score:.1f} → {final_score:.1f}")
+        
+        final_scores.append(final_score)
+    
+    # Step 5: Generate Gemini summaries for high-scoring items only
+    indices_for_gemini = [
+        i for i, score in enumerate(final_scores)
+        if score >= payload.score_threshold
     ]
     
-    results = await asyncio.gather(*tasks)
+    logger.info(f"🔥 High-risk items: {len(indices_for_gemini)}/{len(payload.items)} → sending to Gemini")
     
-    logger.info(f"✅ Completed {len(results)} analyses")
+    # Limit concurrent Gemini calls
+    semaphore = asyncio.Semaphore(payload.max_parallel_gemini)
     
-    return {"results": results}
+    async def analyze_with_limit(idx: int):
+        async with semaphore:
+            return await generate_summary_and_mitigation(
+                masked_text=masked_list[idx],
+                url=payload.items[idx].url,
+                timestamp=payload.items[idx].timestamp,
+                signals=signals_list[idx],
+                vulnerability_score=final_scores[idx]
+            )
+    
+    # Run Gemini analyses in parallel (only for high-risk items)
+    gemini_tasks = [analyze_with_limit(i) for i in indices_for_gemini]
+    gemini_responses = await asyncio.gather(*gemini_tasks) if gemini_tasks else []
+    
+    # Map responses back to indices
+    gemini_map = {idx: res for idx, res in zip(indices_for_gemini, gemini_responses)}
+    
+    # Step 6: Compile final results
+    results = []
+    for i in range(len(payload.items)):
+        score = final_scores[i]
+        
+        # Use Gemini summary if available, otherwise basic message
+        if i in gemini_map:
+            summary = gemini_map[i].get("summary", "")
+            rationale = gemini_map[i].get("rationale", "")
+            mitigation = gemini_map[i].get("mitigation", "")
+        else:
+            # Low-risk items don't get Gemini analysis
+            if score < payload.score_threshold:
+                summary = "Low risk - no detailed analysis required"
+                rationale = "Score below threshold for detailed analysis"
+                mitigation = "Standard security monitoring sufficient"
+            else:
+                summary = "Analysis pending"
+                rationale = "Item qualified for analysis but processing incomplete"
+                mitigation = "Review manually if this persists"
+        
+        results.append(ItemOut(
+            index=i,
+            vulnerability_score=score,
+            summary=summary,
+            rationale=rationale,
+            alerts=alert_level(score),
+            signals=signals_list[i],
+            mitigation=mitigation
+        ))
+    
+    logger.info(f"✅ Batch complete: {len(results)} results")
+    return BatchOut(results=results)
 
 @app.post("/analyze_single")
 async def analyze_single(text: str, url: Optional[str] = None):
-    """Analyze a single text item"""
-    result = await analyze_with_gemini(text, url, 0)
-    return result
+    """
+    Convenience endpoint for analyzing a single text.
+    """
+    result = await analyze_batch(BatchIn(
+        items=[ItemIn(text=text, url=url)],
+        score_threshold=40.0
+    ))
+    return result.results[0] if result.results else None
+
+# ============================================================================
+# STARTUP
+# ============================================================================
+
+@app.on_event("startup")
+async def startup():
+    logger.info("=" * 60)
+    logger.info("Nexzy AI Service Starting...")
+    logger.info(f"Model: {MODEL_NAME}")
+    logger.info(f"Device: {device}")
+    logger.info(f"Gemini: {'✅ Configured' if os.getenv('GEMINI_API_KEY') else '❌ Not configured'}")
+    logger.info("=" * 60)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

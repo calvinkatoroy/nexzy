@@ -54,16 +54,23 @@ const StatsCard = ({ title, value, icon: Icon, color, trend, statKey }) => {
       return Number.isFinite(n) ? n : 0;
     })();
 
-    const obj = { count: start };
-    animate(obj, {
-      count: normalized,
-      round: 1,
-      duration: 800,
-      ease: 'outExpo',
-      update: () => {
-        if (valueRef.current) valueRef.current.innerText = obj.count.toLocaleString();
+    // Manual count-up animation (replacing anime.js)
+    let current = start;
+    const frames = 48; // 800ms / ~16ms per frame
+    const increment = (normalized - start) / frames;
+    
+    const timer = setInterval(() => {
+      current += increment;
+      if ((increment > 0 && current >= normalized) || (increment < 0 && current <= normalized)) {
+        current = normalized;
+        clearInterval(timer);
       }
-    });
+      if (valueRef.current) {
+        valueRef.current.innerText = Math.round(current).toLocaleString();
+      }
+    }, 16); // ~60fps
+
+    return () => clearInterval(timer);
   }, [normalized]);
 
   return (

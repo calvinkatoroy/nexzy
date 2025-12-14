@@ -25,6 +25,9 @@ const AlertDetails = () => {
           return;
         }
         
+        console.log('🔍 Alert data:', foundAlert);
+        console.log('📊 Vulnerability score:', foundAlert.vulnerability_score);
+        
         setAlert(foundAlert);
         setLoading(false);
       } catch (err) {
@@ -40,25 +43,33 @@ const AlertDetails = () => {
   useEffect(() => {
     if (!alert) return;
     
-    // Calculate severity score (critical=95, high=75, medium=50, low=25)
-    const severityScore = {
+    // Use actual RoBERTa vulnerability score if available, otherwise fall back to categorical
+    const severityScore = alert.vulnerability_score > 0 ? alert.vulnerability_score : {
       critical: 95,
       high: 75,
       medium: 50,
       low: 25
     }[alert.severity] || 50;
     
-    // 1. Severity Score Count-up Animation
-    let scoreObj = { val: 0 };
-    animate(scoreObj, {
-      val: severityScore,
-      round: 1,
-      duration: 2000,
-      ease: 'outExpo',
-      update: () => {
-        if (scoreRef.current) scoreRef.current.innerText = scoreObj.val;
-      }
-    });
+    console.log('🎯 Setting score to:', severityScore);
+    
+    // 1. Severity Score Count-up Animation (simplified - anime.js not working)
+    if (scoreRef.current) {
+      let current = 0;
+      const increment = severityScore / 60; // 60 frames for smooth animation
+      const timer = setInterval(() => {
+        current += increment;
+        if (current >= severityScore) {
+          current = severityScore;
+          clearInterval(timer);
+        }
+        if (scoreRef.current) {
+          scoreRef.current.innerText = Math.round(current);
+        }
+      }, 16); // ~60fps
+      
+      return () => clearInterval(timer);
+    }
 
     // 2. Critical Alert Pulse
     const pulseColor = alert.severity === 'critical' ? 'rgba(255, 75, 75, 0.8)' : 
@@ -96,9 +107,12 @@ const AlertDetails = () => {
     );
   }
 
-  const sourceUrl = alert.description.match(/Source: (.+)/)?.[1] || 'Unknown';
+  const sourceUrl = alert.source_url || alert.description.match(/Source: (.+)/)?.[1] || alert.description.match(/Source URL: (.+)/)?.[1] || 'Unknown';
   const sourceDomain = sourceUrl.split('/')[2] || 'Pastebin';
   const severityLabel = alert.severity.charAt(0).toUpperCase() + alert.severity.slice(1);
+  
+  // Extract content snippet if available
+  const contentSnippet = alert.content_snippet || null;
   const severityColor = alert.severity === 'critical' ? 'red' : 
                         alert.severity === 'high' ? 'orange' : 
                         alert.severity === 'medium' ? 'yellow' : 'grey';
@@ -238,6 +252,119 @@ const AlertDetails = () => {
         </div>
       </div>
 
+      {/* AI ANALYSIS DEPTH */}
+      {(alert.vulnerability_score > 0 || alert.ai_signals?.length > 0) && (
+        <div>
+          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+            <ShieldAlert size={20} className="text-lavender" />
+            AI Risk Analysis
+          </h3>
+          <div className="glass-panel p-6 rounded-xl space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* RoBERTa Vulnerability Score */}
+              <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                <div className="text-xs text-grey mb-2 font-mono uppercase tracking-wider">RoBERTa Score</div>
+                <div className={`text-3xl font-bold ${
+                  alert.vulnerability_score >= 80 ? 'text-red' :
+                  alert.vulnerability_score >= 60 ? 'text-orange' :
+                  alert.vulnerability_score >= 40 ? 'text-yellow' :
+                  'text-grey'
+                }`}>
+                  {alert.vulnerability_score > 0 ? Math.round(alert.vulnerability_score) : 0}
+                  <span className="text-base text-grey">/100</span>
+                </div>
+                <div className="mt-2 h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full ${
+                      alert.vulnerability_score >= 80 ? 'bg-red' :
+                      alert.vulnerability_score >= 60 ? 'bg-orange' :
+                      alert.vulnerability_score >= 40 ? 'bg-yellow' :
+                      'bg-grey'
+                    }`}
+                    style={{ width: `${alert.vulnerability_score}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* AI Confidence */}
+              <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                <div className="text-xs text-grey mb-2 font-mono uppercase tracking-wider">Confidence</div>
+                <div className="text-3xl font-bold text-skyblue">
+                  {alert.ai_confidence ? Math.round(alert.ai_confidence * 100) : 0}
+                  <span className="text-base text-grey">%</span>
+                </div>
+                <div className="text-xs text-grey mt-2">
+                  {alert.ai_confidence >= 0.8 ? 'Very High' :
+                   alert.ai_confidence >= 0.6 ? 'High' :
+                   alert.ai_confidence >= 0.4 ? 'Medium' :
+                   'Low'} certainty assessment
+                </div>
+              </div>
+
+              {/* Signals Detected */}
+              <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                <div className="text-xs text-grey mb-2 font-mono uppercase tracking-wider">Signals Detected</div>
+                <div className="text-3xl font-bold text-orange">
+                  {alert.ai_signals?.length || 0}
+                </div>
+                <div className="text-xs text-grey mt-2">Security patterns found</div>
+              </div>
+            </div>
+
+            {/* Detected Signals Breakdown */}
+            {alert.ai_signals && alert.ai_signals.length > 0 && (
+              <div className="border-t border-white/10 pt-6">
+                <h4 className="text-sm font-bold text-white mb-3">Detected Security Signals</h4>
+                <div className="flex flex-wrap gap-2">
+                  {alert.ai_signals.map((signal, idx) => (
+                    <span 
+                      key={idx}
+                      className="px-3 py-1 bg-red/10 text-red border border-red/20 rounded-full text-xs font-mono uppercase tracking-wider"
+                    >
+                      {signal}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Risk Factors */}
+            <div className="border-t border-white/10 pt-6">
+              <h4 className="text-sm font-bold text-white mb-3">Risk Assessment</h4>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className={`w-2 h-2 rounded-full mt-2 ${alert.vulnerability_score >= 80 ? 'bg-red' : 'bg-grey/30'}`} />
+                  <div>
+                    <div className="text-sm text-white font-medium">Critical Exposure Level</div>
+                    <div className="text-xs text-grey">
+                      {alert.vulnerability_score >= 80 ? 'Immediate action required - sensitive data publicly accessible' : 'Not detected'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className={`w-2 h-2 rounded-full mt-2 ${alert.ai_signals?.some(s => s.toLowerCase().includes('credential')) ? 'bg-orange' : 'bg-grey/30'}`} />
+                  <div>
+                    <div className="text-sm text-white font-medium">Credential Compromise</div>
+                    <div className="text-xs text-grey">
+                      {alert.ai_signals?.some(s => s.toLowerCase().includes('credential')) ? 'Credentials or API keys detected in paste' : 'No credentials detected'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className={`w-2 h-2 rounded-full mt-2 ${alert.ai_signals?.some(s => s.toLowerCase().includes('email')) ? 'bg-yellow' : 'bg-grey/30'}`} />
+                  <div>
+                    <div className="text-sm text-white font-medium">PII Exposure</div>
+                    <div className="text-xs text-grey">
+                      {alert.ai_signals?.some(s => s.toLowerCase().includes('email')) ? 'Personal identifiable information exposed' : 'No PII patterns found'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SAMPLE CREDENTIALS */}
       <div>
         <h3 className="text-lg font-bold text-white mb-4">Detected Data Types</h3>
@@ -248,6 +375,50 @@ const AlertDetails = () => {
           { id: 'PII-004', type: 'Address', email: 'Residential Address (Jakarta)', domain: 'Personal Info', exposure: 'Plaintext' },
         ]} />
       </div>
+
+      {/* PASTE CONTENT SNIPPET */}
+      {(contentSnippet || sourceUrl !== 'Unknown') && (
+        <div>
+          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+            <Terminal size={20} className="text-skyblue" />
+            Paste Content Preview
+          </h3>
+          <a
+            href={sourceUrl !== 'Unknown' ? sourceUrl : '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`block glass-panel p-6 rounded-xl border-2 transition-all ${
+              sourceUrl !== 'Unknown' 
+                ? 'border-skyblue/20 hover:border-skyblue/50 hover:bg-white/10 cursor-pointer group' 
+                : 'border-white/10 cursor-default'
+            }`}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className="text-xs text-grey font-mono uppercase tracking-wider flex items-center gap-2">
+                <Globe size={14} className="text-skyblue" />
+                Click to view full paste
+              </div>
+              {sourceUrl !== 'Unknown' && (
+                <div className="text-xs text-skyblue opacity-60 group-hover:opacity-100 transition-opacity">
+                  Open in new tab →
+                </div>
+              )}
+            </div>
+            <div className="font-mono text-sm text-grey leading-relaxed whitespace-pre-wrap max-h-64 overflow-hidden relative">
+              {contentSnippet || 'Content preview not available. Click to view the full paste.'}
+              {contentSnippet && (
+                <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-background to-transparent" />
+              )}
+            </div>
+            {sourceUrl !== 'Unknown' && (
+              <div className="mt-4 pt-4 border-t border-white/10 text-xs text-skyblue group-hover:text-white transition-colors flex items-center gap-2">
+                <Globe size={12} />
+                <span className="truncate">{sourceUrl}</span>
+              </div>
+            )}
+          </a>
+        </div>
+      )}
 
     </div>
   );

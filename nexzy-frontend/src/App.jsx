@@ -84,6 +84,7 @@ const CommandPalette = ({ isOpen, onClose }) => {
     { icon: Search, label: 'Search Intelligence', path: '/search', color: 'text-skyblue' },
     { icon: Bell, label: 'View Alerts', path: '/alerts', color: 'text-orange' },
     { icon: SettingsIcon, label: 'Settings', path: '/settings', color: 'text-grey' },
+    { icon: Search, label: 'Quick Scan Now', action: 'quickscan', color: 'text-green' },
     { icon: LogOut, label: 'Log Out', action: 'logout', color: 'text-red' },
   ];
 
@@ -95,6 +96,14 @@ const CommandPalette = ({ isOpen, onClose }) => {
     if (cmd.action === 'logout') {
       await signOut();
       navigate('/landing');
+    } else if (cmd.action === 'quickscan') {
+      try {
+        const api = await import('./lib/api').then(m => m.api);
+        await api.quickScan();
+        navigate('/dashboard');
+      } catch (error) {
+        console.error('Quick scan failed:', error);
+      }
     } else {
       navigate(cmd.path);
     }

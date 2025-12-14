@@ -200,11 +200,12 @@ export const api = {
     };
 
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      // Silently handle WebSocket errors - backend might not be running
+      console.warn('⚠️ WebSocket connection failed (backend may not be running)');
     };
 
     ws.onclose = () => {
-      console.log('WebSocket disconnected');
+      console.log('🔌 WebSocket disconnected');
     };
 
     return ws;

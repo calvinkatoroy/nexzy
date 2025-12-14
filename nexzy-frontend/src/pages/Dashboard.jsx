@@ -3,6 +3,7 @@ import { AlertCircle, ShieldCheck, Key, Activity, Plus, Zap } from 'lucide-react
 import StatsCard from '../components/dashboard/StatsCard';
 import TrendGraph from '../components/dashboard/TrendGraph';
 import RecentAlerts from '../components/dashboard/RecentAlerts';
+import DarkWebBadge from '../components/dashboard/DarkWebBadge';
 import ScanModal from '../components/ScanModal';
 import ScanNotification from '../components/ScanNotification';
 import ScanLogsModal from '../components/ScanLogsModal';
@@ -47,9 +48,11 @@ const Dashboard = () => {
           s = await res.json();
           console.log('[DASHBOARD] Fallback succeeded');
         }
-        console.log('[DASHBOARD] /api/stats:', s);
-        const newAlerts = s.new_alerts ?? 0;
-        const totalCredentials = s.credentials_leaked ?? 0;
+        console.log('[DASHBOARD] /api/stats FULL:', JSON.stringify(s, null, 2));
+        console.log('[DASHBOARD] new_alerts field:', s.new_alerts);
+        console.log('[DASHBOARD] credentials_leaked field:', s.credentials_leaked);
+        const newAlerts = s.new_alerts ?? s.alerts_total ?? 0;
+        const totalCredentials = s.credentials_leaked ?? s.alerts_total ?? 0;
         const criticalThreats = s.alerts_critical ?? 0;
         const resolved = s.alerts_resolved ?? 0;
 
@@ -215,6 +218,13 @@ const Dashboard = () => {
           trend="Today"
         />
       </div>
+
+      {/* Dark Web Monitoring Badge */}
+      <DarkWebBadge 
+        threatLevel={stats.criticalThreats > 5 ? 'critical' : stats.criticalThreats > 2 ? 'high' : stats.criticalThreats > 0 ? 'elevated' : 'safe'}
+        isScanning={activeScan?.status === 'running'}
+        darkWebAlerts={Math.floor(stats.criticalThreats * 0.3)} // Simulate ~30% from dark web
+      />
 
       {/* 3. Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[400px]">

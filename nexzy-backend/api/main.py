@@ -363,6 +363,8 @@ async def run_scan_task(
             if has_creds:
                 credentials_found += 1
             
+            # Extract content snippet for preview (first 500 chars)
+            content_text = item.get('text', '') or item.get('content_preview', '')
             result_data = {
                 'id': str(uuid.uuid4()),
                 'scan_id': scan_id,
@@ -374,6 +376,7 @@ async def run_scan_task(
                 'emails': item.get('emails', []),
                 'target_emails': item.get('target_emails', []),
                 'has_credentials': has_creds,
+                'content_snippet': content_text[:500] if content_text else '',
                 'found_at': datetime.utcnow().isoformat()
             }
             
@@ -485,11 +488,20 @@ async def run_scan_task(
                     if ai_score > 0:
                         description += f"\n\nVulnerability Score: {ai_score:.1f}/100"
                     
+                    # Get content snippet (first 500 chars of paste content)
+                    content_snippet = result.get('content_preview', '')[:500] if result.get('content_preview') else ''
+                    
                     alert_data = {
                         'user_id': user_id,
                         'title': f"Data Leak Detected - {result.get('source', 'Unknown Source')} (AI Score: {ai_score:.0f})" if ai_score > 0 else f"Data Leak Detected - {result.get('source', 'Unknown Source')}",
                         'description': description,
-                        'severity': severity
+                        'severity': severity,
+                        'vulnerability_score': ai_score if ai_score > 0 else 0.0,
+                        'ai_signals': ai_signals if ai_signals else [],
+                        'ai_confidence': min(ai_score / 100.0, 1.0) if ai_score > 0 else 0.0,
+                        'ai_mitigation': ai_mitigation if ai_mitigation else '',
+                        'content_snippet': content_snippet,
+                        'source_url': result.get('url', '')
                         # status will use database default
                     }
                     
@@ -638,15 +650,8 @@ async def get_stats(
         alerts_resolved = sum(1 for a in alerts if (a.get('status') or '').lower() == 'resolved')
         alerts_open = alerts_total - alerts_resolved
 
-        # New alerts in last 24 hours
-        now = datetime.utcnow()
-        def is_recent(created_at: str) -> bool:
-            try:
-                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                return (now - dt).total_seconds() <= 24 * 3600
-            except Exception:
-                return False
-        new_alerts = sum(1 for a in alerts if a.get('created_at') and is_recent(a['created_at']))
+        # New alerts: count alerts with status='new' (unread/active alerts)
+        new_alerts = sum(1 for a in alerts if (a.get('status') or '').lower() == 'new')
 
         # Credentials leaked: count scan_results with has_credentials=True for user's scans
         scans_resp = supabase.table('scans')\
@@ -1050,9 +1055,9 @@ async def list_alerts(
         limit = min(limit, 100) if limit > 0 else 50
         offset = max(offset, 0)
         
-        # Build query
+        # Build query - explicitly select all fields including new AI columns
         query = supabase.table('alerts')\
-            .select('*')\
+            .select('id, user_id, title, description, severity, status, vulnerability_score, ai_signals, ai_confidence, ai_mitigation, created_at, updated_at')\
             .eq('user_id', user_id)
         
         # Apply severity filter if provided

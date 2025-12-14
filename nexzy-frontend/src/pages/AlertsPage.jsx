@@ -16,7 +16,7 @@ const AlertsPage = () => {
     try {
       const alertsData = await api.getAlerts();
       
-      // Convert alerts to display format
+      // Convert alerts to display format with vulnerability scores
       const alertList = alertsData.map(alert => ({
         id: alert.id,
         title: alert.title,
@@ -24,7 +24,11 @@ const AlertsPage = () => {
         time: getTimeAgo(alert.created_at),
         severity: alert.severity.charAt(0).toUpperCase() + alert.severity.slice(1),
         status: alert.status === 'new' ? 'Active' : alert.status.charAt(0).toUpperCase() + alert.status.slice(1),
-        description: alert.description
+        description: alert.description,
+        vulnerabilityScore: alert.vulnerability_score || 0,
+        aiSignals: alert.ai_signals || [],
+        aiConfidence: alert.ai_confidence || 0,
+        aiMitigation: alert.ai_mitigation || ''
       }));
       
       setAlerts(alertList);
@@ -96,10 +100,11 @@ const AlertsPage = () => {
       <div className="glass-panel rounded-xl overflow-hidden border border-white/10">
         {/* Table Header */}
         <div className="grid grid-cols-12 gap-4 p-4 border-b border-white/10 bg-white/5 text-xs text-grey font-mono uppercase tracking-wider">
-          <div className="col-span-1">Sev</div>
-          <div className="col-span-5">Alert Description</div>
+          <div className="col-span-1">Risk</div>
+          <div className="col-span-4">Alert Description</div>
           <div className="col-span-2">Source</div>
           <div className="col-span-2">Status</div>
+          <div className="col-span-1 text-center">Score</div>
           <div className="col-span-2 text-right">Time</div>
         </div>
 
@@ -126,7 +131,7 @@ const AlertsPage = () => {
                 </div>
 
                 {/* Title & ID */}
-                <div className="col-span-5">
+                <div className="col-span-4">
                   <div className="text-white font-bold text-sm group-hover:text-skyblue transition-colors">{alert.title}</div>
                   <div className="text-[10px] text-grey font-mono">ID: {String(alert.id).substring(0, 8)}</div>
                 </div>
@@ -146,6 +151,19 @@ const AlertsPage = () => {
                   }`}>
                     {alert.status}
                   </span>
+                </div>
+
+                {/* Vulnerability Score */}
+                <div className="col-span-1 text-center">
+                  <div className={`text-lg font-bold font-mono ${
+                    alert.vulnerabilityScore >= 80 ? 'text-red' :
+                    alert.vulnerabilityScore >= 60 ? 'text-orange' :
+                    alert.vulnerabilityScore >= 40 ? 'text-yellow' :
+                    'text-grey'
+                  }`}>
+                    {alert.vulnerabilityScore > 0 ? Math.round(alert.vulnerabilityScore) : '-'}
+                  </div>
+                  <div className="text-[9px] text-grey">/ 100</div>
                 </div>
 
                 {/* Time */}
