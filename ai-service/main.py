@@ -40,18 +40,28 @@ MODEL_NAME = "Harafu/roberta-risk-next"
 ALERT_HIGH = 80
 ALERT_MED = 50
 
-# Load model and tokenizer
-logger.info(f"Loading RoBERTa model: {MODEL_NAME}")
-try:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
-    model.eval()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
-    logger.info(f"✅ RoBERTa model loaded successfully on {device}")
-except Exception as e:
-    logger.error(f"Failed to load RoBERTa model: {e}")
-    raise
+# Lazy load model and tokenizer (initialized on first request)
+logger.info(f"Model will be lazy-loaded: {MODEL_NAME}")
+tokenizer = None
+model = None
+device = None
+
+def load_model():
+    """Lazy load model on first request"""
+    global tokenizer, model, device
+    if model is None:
+        logger.info(f"Loading RoBERTa model: {MODEL_NAME}")
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+            model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+            model.eval()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model.to(device)
+            logger.info(f"✅ RoBERTa model loaded successfully on {device}")
+        except Exception as e:
+            logger.error(f"Failed to load RoBERTa model: {e}")
+            raise
+    return model, tokenizer, device
 
 # ============================================================================
 # FASTAPI APP
@@ -121,22 +131,26 @@ def batch_score_texts(texts: List[str]) -> List[float]:
     Returns:
         List of vulnerability scores (0-100)
     """
+    # Lazy load model on first use
+    _, local_tokenizer, local_device = load_model()
+    
     scores = []
     
     for text in texts:
         try:
             # Tokenize
-            inputs = tokenizer(
+            inputs = local_tokenizer(
                 text,
                 return_tensors="pt",
                 truncation=True,
                 max_length=512,
                 padding=True
-            ).to(device)
+            ).to(local_device)
             
             # Get model output
             with torch.no_grad():
-                outputs = model(**inputs)
+                local_model, _, _ = load_model()
+                outputs = local_model(**inputs)
                 logits = outputs.logits
                 
                 # Handle both classifier (2 outputs) and regression (1 output)

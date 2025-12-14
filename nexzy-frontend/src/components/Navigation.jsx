@@ -68,17 +68,18 @@ const Navigation = ({ onCommandClick }) => {
           bottom-6 left-1/2 -translate-x-1/2 w-auto h-16 
           md:left-6 md:top-1/2 md:-translate-y-1/2 md:w-16 md:h-auto md:translate-x-0
           flex items-center justify-center"
+        role="navigation"
+        aria-label="Main navigation"
       >
         {/* The Glass Pill */}
         <div className="glass-panel rounded-full px-6 py-3 md:px-3 md:py-6 flex md:flex-col items-center gap-6 shadow-2xl">
-          
+          {/* Nexzy Logo/Brand */}
+          <span className="font-bold text-lg text-white mr-4 md:mb-4 md:mr-0" data-testid="nexzy-logo">Nexzy</span>
           {NAV_ITEMS.map((item, index) => {
             const Icon = item.icon;
-            
             // Render logic: specific styling if it's a "Command" button vs a Link
             if (item.action) {
               const handleClick = item.action === 'LOGOUT' ? handleLogout : onCommandClick;
-              
               return (
                 <button
                   key={index}
@@ -94,7 +95,6 @@ const Navigation = ({ onCommandClick }) => {
                 </button>
               );
             }
-
             return (
               <NavLink
                 key={index}
@@ -105,10 +105,8 @@ const Navigation = ({ onCommandClick }) => {
                 `}
               >
                 <Icon className={`w-6 h-6 ${item.color}`} />
-                
                 {/* Active Indicator Dot (Apple Style) */}
                 <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-white rounded-full opacity-0 aria-[current=page]:opacity-100 md:bottom-auto md:left-auto md:top-1/2 md:-right-2 md:-translate-y-1/2" aria-current={window.location.pathname === item.path ? 'page' : undefined} />
-                
                 {/* Tooltip */}
                 <span className="absolute left-14 top-1/2 -translate-y-1/2 bg-background border border-white/10 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap hidden md:block pointer-events-none">
                   {item.label}

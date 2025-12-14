@@ -4,6 +4,7 @@ import { animate } from 'animejs';
 const StatsCard = ({ title, value, icon: Icon, color, trend, statKey }) => {
   const valueRef = useRef(null);
   const [fetchedValue, setFetchedValue] = useState(null);
+  const [displayValue, setDisplayValue] = useState(0);
 
   // Fetch from /api/stats if value is not provided
   useEffect(() => {
@@ -48,30 +49,22 @@ const StatsCard = ({ title, value, icon: Icon, color, trend, statKey }) => {
   })();
 
   useEffect(() => {
-    const start = (() => {
-      const currentText = valueRef.current?.innerText || '0';
-      const n = parseInt(currentText.replace(/[^0-9-]/g, ''), 10);
-      return Number.isFinite(n) ? n : 0;
-    })();
-
-    // Manual count-up animation (replacing anime.js)
-    let current = start;
+    const start = displayValue;
     const frames = 48; // 800ms / ~16ms per frame
     const increment = (normalized - start) / frames;
     
+    let current = start;
     const timer = setInterval(() => {
       current += increment;
       if ((increment > 0 && current >= normalized) || (increment < 0 && current <= normalized)) {
         current = normalized;
         clearInterval(timer);
       }
-      if (valueRef.current) {
-        valueRef.current.innerText = Math.round(current).toLocaleString();
-      }
+      setDisplayValue(Math.round(current));
     }, 16); // ~60fps
 
     return () => clearInterval(timer);
-  }, [normalized]);
+  }, [normalized, displayValue]);
 
   return (
     <div className={`glass-panel p-6 rounded-2xl relative overflow-hidden group hover:bg-white/5 transition-colors border-l-4 ${color.replace('text-', 'border-')}`}>
@@ -86,7 +79,7 @@ const StatsCard = ({ title, value, icon: Icon, color, trend, statKey }) => {
       </div>
 
       <div className="flex items-end gap-3">
-        <span ref={valueRef} className="text-4xl font-mono font-bold text-white">0</span>
+        <span className="text-4xl font-mono font-bold text-white">{displayValue.toLocaleString()}</span>
         {trend && (
           <span className="text-xs mb-1.5 font-mono opacity-60">
             {trend}

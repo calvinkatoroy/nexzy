@@ -610,6 +610,7 @@ async def health_check(supabase: Client = Depends(get_supabase)):
     
     return {
         "status": "healthy",
+        "version": "1.0.0",
         "timestamp": datetime.utcnow().isoformat(),
         "database": db_status,
         "websocket_connections": len(manager.active_connections)

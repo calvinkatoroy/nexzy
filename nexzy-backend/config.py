@@ -86,7 +86,7 @@ API_PORT = int(os.getenv("API_PORT", "8001"))
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8000")
 
 # CORS settings
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost,http://localhost:5173,http://localhost:3000").split(",")
 
 # ==============================================================================
 # LOGGING CONFIGURATION
