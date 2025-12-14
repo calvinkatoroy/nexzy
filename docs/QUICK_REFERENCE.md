@@ -85,7 +85,7 @@ npm test
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 SUPABASE_JWT_SECRET=your_jwt_secret
-AI_SERVICE_URL=http://localhost:8001
+AI_SERVICE_URL=http://localhost:8000
 ```
 
 ### Frontend (.env)

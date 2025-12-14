@@ -16,12 +16,12 @@ This guide shows how to connect your React frontend (`nexzy-frontend`) with the 
     ┌────▼──────┐    ┌─────▼──────────┐
     │ Supabase  │    │ FastAPI Backend│
     │   Auth    │    │ (nexzy-backend)│
-    │   DB      │    │   Port: 8000   │
+    │   DB      │    │   Port: 8001   │
     └───────────┘    └────────┬───────┘
                               │
                          ┌────▼─────┐
-                         │ Supabase │
-                         │    DB    │
+                         │ AI Service│
+                         │   Port: 8000 │
                          └──────────┘
 ```
 
@@ -77,7 +77,7 @@ Create or update `nexzy-frontend/src/api/client.js`:
 // API Client for Nexzy Backend
 import { supabase } from '../lib/supabase'; // Your existing Supabase client
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 
 class NexzyAPI {
   /**
@@ -538,7 +538,7 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```env
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
-VITE_API_URL=http://localhost:8000
+VITE_API_URL=http://localhost:8001
 ```
 
 ### Backend (`.env`)
