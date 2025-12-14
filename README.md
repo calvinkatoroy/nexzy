@@ -95,7 +95,7 @@ Create `.env`:
 SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 SUPABASE_JWT_SECRET=your_jwt_secret
-AI_SERVICE_URL=http://localhost:8001
+AI_SERVICE_URL=http://localhost:8000
 ```
 
 Run database migrations:
@@ -105,7 +105,7 @@ Run database migrations:
 
 Start backend:
 ```bash
-python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
 ### 3. Frontend Setup

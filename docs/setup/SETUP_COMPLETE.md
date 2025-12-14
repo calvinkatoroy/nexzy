@@ -263,7 +263,7 @@ Your frontend should:
 
 2. **Create Scan**:
    ```javascript
-   const response = await fetch('http://localhost:8000/api/scan', {
+   const response = await fetch('http://localhost:8001/api/scan', {
      method: 'POST',
      headers: {
        'Authorization': `Bearer ${token}`,
