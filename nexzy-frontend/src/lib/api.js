@@ -191,6 +191,12 @@ export const api = {
     };
 
     ws.onmessage = (event) => {
+      // Handle heartbeat pong response
+      if (event.data === 'pong') {
+        console.log('💓 Heartbeat received');
+        return;
+      }
+
       try {
         const message = JSON.parse(event.data);
         onMessage(message);

@@ -143,7 +143,7 @@ python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8001
 ### 3. Frontend Setup
 
 ```bash
-cd nexzy-frontend
+cd nexzy-frontend![1765887139640](image/README/1765887139640.png)
 npm install
 ```
 

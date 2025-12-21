@@ -73,6 +73,16 @@ Write-Host "  - Backend: nexzy-backend/.pytest_cache/" -ForegroundColor Gray
 Write-Host "  - Frontend: nexzy-frontend/coverage/" -ForegroundColor Gray
 Write-Host ""
 
+# ===================== Penjelasan Detail =====================
+Write-Host "Test Details:" -ForegroundColor Cyan
+Write-Host "- Backend (pytest):" -ForegroundColor Yellow
+Write-Host "  • Menguji integrasi AI, endpoint API (root, health, stats, scan, alerts, websocket), autentikasi, validasi input, dan error handling." -ForegroundColor Gray
+Write-Host "  • PASS artinya semua endpoint merespons benar, validasi & autentikasi berjalan, serta tidak ada error kritis." -ForegroundColor Gray
+Write-Host "- Frontend (vitest):" -ForegroundColor Yellow
+Write-Host "  • Menguji komponen UI utama (StatsCard, Navigation), rendering, interaksi, dan tampilan data." -ForegroundColor Gray
+Write-Host "  • PASS artinya komponen berhasil dirender, interaksi & data tampil sesuai harapan." -ForegroundColor Gray
+Write-Host "=============================================================" -ForegroundColor Cyan
+
 if ($backendExitCode -ne 0 -or $frontendExitCode -ne 0) {
     exit 1
 }
