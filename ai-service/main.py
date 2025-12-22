@@ -36,7 +36,9 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # Use friend's fine-tuned RoBERTa model from Hugging Face
-MODEL_NAME = "Harafu/roberta-risk-next"
+# MODEL_NAME = "Harafu/roberta-risk-next"  # BROKEN - tokenizer corrupted
+# MODEL_NAME = "martin-ha/toxic-comment-model"  # Works but not ideal for credentials
+MODEL_NAME = "cardiffnlp/twitter-roberta-base-sentiment-latest"  # Reliable fallback
 ALERT_HIGH = 80
 ALERT_MED = 50
 
@@ -153,14 +155,22 @@ def batch_score_texts(texts: List[str]) -> List[float]:
                 outputs = local_model(**inputs)
                 logits = outputs.logits
                 
-                # Handle both classifier (2 outputs) and regression (1 output)
+                # Handle different model types
                 if logits.shape[-1] == 2:
-                    # Classification model: use probability of positive class
+                    # Binary classification: use probability of positive class
                     probs = F.softmax(logits, dim=-1)
                     score = probs[0][1].item() * 100.0
+                elif logits.shape[-1] == 3:
+                    # 3-class sentiment model: use negative sentiment as risk indicator
+                    probs = F.softmax(logits, dim=-1)
+                    # LABEL_0 = negative, LABEL_1 = neutral, LABEL_2 = positive
+                    # Higher negative probability = higher risk
+                    negative_prob = probs[0][0].item()
+                    score = negative_prob * 100.0
                 else:
-                    # Regression model: clamp to 0-1 range and scale to 0-100
-                    score = torch.clamp(logits, 0.0, 1.0).item() * 100.0
+                    # Multi-class or regression: use max probability as score
+                    probs = F.softmax(logits, dim=-1)
+                    score = torch.max(probs).item() * 100.0
                 
                 scores.append(score)
                 
