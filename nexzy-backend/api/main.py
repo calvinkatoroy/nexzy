@@ -809,6 +809,16 @@ async def quick_scan(
         # Schedule background task
         asyncio.create_task(run_scan_task(scan_id=scan_id, user_id=user_id, scan_request=scan_request, supabase=supabase))
         
+        # Notify frontend of success via WebSocket
+        await manager.broadcast({
+            'type': 'scan_update',
+            'data': {
+                'scan_id': scan_id,
+                'status': 'success',
+                'message': f'Scan {scan_id} completed successfully!'
+            }
+        })
+        
         return ScanResponse(scan_id=scan_id, status='queued', 
                           message=f'Quick scan started! Monitoring {target_domain} for leaks...', 
                           created_at=datetime.utcnow().isoformat())
